@@ -1,0 +1,149 @@
+// Package response handles HTTP response processing and formatting
+package response
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// SensitiveHeaders contains header names that should be masked in output
+var SensitiveHeaders = map[string]bool{
+	"authorization":       true,
+	"x-api-key":           true,
+	"x-auth-token":        true,
+	"cookie":              true,
+	"x-access-token":      true,
+	"x-secret-key":        true,
+	"proxy-authorization": true,
+}
+
+// Handler processes and displays HTTP responses
+type Handler struct {
+	Verbose bool
+}
+
+// New creates a new response handler
+func New(verbose bool) *Handler {
+	return &Handler{Verbose: verbose}
+}
+
+// Process handles the HTTP response and prints it
+func (h *Handler) Process(resp *http.Response, elapsed time.Duration) error {
+	// Print status line with timing
+	fmt.Printf("← HTTP/%d.%d %s (%.2fs)\n",
+		resp.ProtoMajor, resp.ProtoMinor, resp.Status, elapsed.Seconds())
+
+	// Print response headers
+	for key, values := range resp.Header {
+		for _, value := range values {
+			displayValue := h.maskSensitiveValue(key, value)
+			fmt.Printf("← %s: %s\n", key, displayValue)
+		}
+	}
+	fmt.Println()
+
+	// Read and print response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if len(respBody) == 0 {
+		fmt.Println("← (empty response body)")
+		return nil
+	}
+
+	// Pretty print based on content type
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		if err := PrettyPrintJSON("", string(respBody)); err != nil {
+			// Fall back to raw output if JSON parsing fails
+			fmt.Println(string(respBody))
+		}
+	} else {
+		fmt.Println(string(respBody))
+	}
+
+	return nil
+}
+
+// maskSensitiveValue masks sensitive header values unless verbose mode is enabled
+func (h *Handler) maskSensitiveValue(key, value string) string {
+	if h.Verbose {
+		return value
+	}
+
+	lowerKey := strings.ToLower(key)
+	if SensitiveHeaders[lowerKey] {
+		if len(value) > 10 {
+			return value[:6] + "***MASKED***"
+		}
+		return "***MASKED***"
+	}
+
+	return value
+}
+
+// PrettyPrintJSON attempts to pretty-print JSON data
+func PrettyPrintJSON(prefix, jsonStr string) error {
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return err
+	}
+
+	prettyJSON, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	if prefix != "" {
+		lines := strings.Split(string(prettyJSON), "\n")
+		for _, line := range lines {
+			if line != "" {
+				fmt.Printf("%s%s\n", prefix, line)
+			}
+		}
+	} else {
+		fmt.Println(string(prettyJSON))
+	}
+
+	return nil
+}
+
+// PrintRequest prints the request details to stdout
+func PrintRequest(method, url string, headers http.Header, data string, verbose bool) {
+	fmt.Printf("\n→ %s %s\n", method, url)
+
+	handler := &Handler{Verbose: verbose}
+
+	// Print headers with sensitive value masking
+	for key, values := range headers {
+		for _, value := range values {
+			displayValue := handler.maskSensitiveValue(key, value)
+			fmt.Printf("→ %s: %s\n", key, displayValue)
+		}
+	}
+
+	// Print request body if present
+	if data != "" {
+		fmt.Printf("→\n")
+		// Pretty print JSON if possible
+		if isJSON(data) {
+			PrettyPrintJSON("→ ", data)
+		} else {
+			fmt.Printf("→ %s\n", data)
+		}
+	}
+	fmt.Println()
+}
+
+// isJSON is a helper to detect if a string is JSON
+func isJSON(s string) bool {
+	s = strings.TrimSpace(s)
+	return (strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}")) ||
+		(strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]"))
+}

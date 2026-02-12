@@ -1,0 +1,66 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Build directories
+/bin/
+/dist/
+/build/
+/tmp/
+
+# Binary name (in case it's built in root)
+/ilo-pana
+/api-tester
+
+# IDE specific files
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-*
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Nix
+.direnv/
+result
+result-*
+
+# Debug files
+*.log
+debug
+
+# Profiling
+*.prof
+*.pprof
+
+# Claude artifacts
+.claude/

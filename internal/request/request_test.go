@@ -1,0 +1,258 @@
+package request
+
+import (
+	"io"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"ilo-pana/internal/config"
+)
+
+func TestValidateURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		url         string
+		wantError   bool
+		errorString string
+	}{
+		{
+			name:      "valid_https_url",
+			url:       "https://api.example.com/v1/users",
+			wantError: false,
+		},
+		{
+			name:      "valid_http_url",
+			url:       "http://api.example.com/v1/users",
+			wantError: false,
+		},
+		{
+			name:      "valid_url_with_port",
+			url:       "https://api.example.com:8080/v1/users",
+			wantError: false,
+		},
+		{
+			name:        "empty_url",
+			url:         "",
+			wantError:   true,
+			errorString: "URL cannot be empty",
+		},
+		{
+			name:        "invalid_scheme_ftp",
+			url:         "ftp://files.example.com/data",
+			wantError:   true,
+			errorString: "unsupported URL scheme",
+		},
+		{
+			name:        "no_host",
+			url:         "https:///path",
+			wantError:   true,
+			errorString: "URL must include a host",
+		},
+		{
+			name:      "localhost_warning",
+			url:       "http://localhost:8080/api",
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Capture stderr to check for warnings
+			oldStderr := os.Stderr
+			r, w, _ := os.Pipe()
+			os.Stderr = w
+
+			err := ValidateURL(tt.url)
+
+			w.Close()
+			os.Stderr = oldStderr
+
+			output, _ := io.ReadAll(r)
+			if strings.Contains(tt.url, "localhost") || strings.Contains(tt.url, "127.0.0.1") {
+				if !strings.Contains(string(output), "Warning: Connecting to local address") {
+					t.Errorf("Expected localhost warning for URL %q", tt.url)
+				}
+			}
+
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ValidateURL(%q) error = nil, want error containing %q", tt.url, tt.errorString)
+				} else if !strings.Contains(err.Error(), tt.errorString) {
+					t.Errorf("ValidateURL(%q) error = %v, want error containing %q", tt.url, err, tt.errorString)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateURL(%q) error = %v, want nil", tt.url, err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateMethod(t *testing.T) {
+	tests := []struct {
+		name      string
+		method    string
+		wantError bool
+	}{
+		{"valid_GET", "GET", false},
+		{"valid_POST", "POST", false},
+		{"valid_PUT", "PUT", false},
+		{"valid_DELETE", "DELETE", false},
+		{"valid_PATCH", "PATCH", false},
+		{"invalid_INVALID", "INVALID", true},
+		{"invalid_lowercase", "get", true},
+		{"invalid_empty", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateMethod(tt.method)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ValidateMethod(%q) error = nil, want error", tt.method)
+				} else if !strings.Contains(err.Error(), "invalid HTTP method") {
+					t.Errorf("ValidateMethod(%q) error = %v, want 'invalid HTTP method'", tt.method, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateMethod(%q) error = %v, want nil", tt.method, err)
+				}
+			}
+		})
+	}
+}
+
+func TestIsJSON(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"valid_object", `{"key": "value"}`, true},
+		{"valid_array", `["item1", "item2"]`, true},
+		{"valid_with_spaces", `  {"key": "value"}  `, true},
+		{"valid_empty_object", `{}`, true},
+		{"valid_empty_array", `[]`, true},
+		{"invalid_plain_text", `plain text`, false},
+		{"invalid_partial_json", `{"key": `, false},
+		{"invalid_number", `123`, false},
+		{"invalid_empty", ``, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsJSON(tt.input); got != tt.want {
+				t.Errorf("IsJSON(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuild(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    *config.Config
+		wantError bool
+		checkFunc func(*testing.T, *config.Config)
+	}{
+		{
+			name: "simple_get_request",
+			config: &config.Config{
+				Method:  "GET",
+				URL:     "https://api.example.com/users",
+				Headers: map[string]string{},
+				Timeout: 30 * time.Second,
+			},
+			wantError: false,
+		},
+		{
+			name: "post_with_json_data",
+			config: &config.Config{
+				Method:  "POST",
+				URL:     "https://api.example.com/users",
+				Data:    `{"name":"test"}`,
+				Headers: map[string]string{},
+				Timeout: 30 * time.Second,
+			},
+			wantError: false,
+		},
+		{
+			name: "invalid_url",
+			config: &config.Config{
+				Method:  "GET",
+				URL:     "not-a-url",
+				Headers: map[string]string{},
+				Timeout: 30 * time.Second,
+			},
+			wantError: true,
+		},
+		{
+			name: "invalid_method",
+			config: &config.Config{
+				Method:  "INVALID",
+				URL:     "https://api.example.com",
+				Headers: map[string]string{},
+				Timeout: 30 * time.Second,
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := Build(tt.config)
+			if tt.wantError {
+				if err == nil {
+					t.Error("Build() error = nil, want error")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Build() error = %v, want nil", err)
+				}
+				if req == nil {
+					t.Error("Build() returned nil request")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkValidateURL(b *testing.B) {
+	urls := []string{
+		"https://api.example.com/v1/users",
+		"http://localhost:8080/test",
+		"https://sub.domain.example.com:443/path/to/resource?query=value",
+	}
+
+	// Suppress stderr during benchmark
+	oldStderr := os.Stderr
+	os.Stderr, _ = os.Open(os.DevNull)
+	defer func() { os.Stderr = oldStderr }()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, url := range urls {
+			_ = ValidateURL(url)
+		}
+	}
+}
+
+func BenchmarkIsJSON(b *testing.B) {
+	testStrings := []string{
+		`{"key": "value", "nested": {"a": 1, "b": 2}}`,
+		`plain text that is not JSON`,
+		`[1, 2, 3, 4, 5]`,
+		`<xml>not json</xml>`,
+		`{}`,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, s := range testStrings {
+			_ = IsJSON(s)
+		}
+	}
+}
