@@ -62,9 +62,6 @@ changelog:
       regexp: '^fix'
 
 release:
-  github:
-    owner: hnkNkm
-    name: ilo-pana
   name_template: "v{{.Version}}"
   header: |
     ## ilo-pana v{{.Version}}
