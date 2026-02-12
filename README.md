@@ -13,15 +13,48 @@ A simple and powerful HTTP API testing tool written in Go. The name "ilo-pana" m
 
 ## Installation
 
+### Download Binary (Recommended)
+
+Download the latest release from [GitHub Releases](https://github.com/hnkNkm/ilo-pana/releases/latest).
+
+#### macOS
+```bash
+# Intel Mac
+curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.1.0_macOS_x86_64.tar.gz | tar xz
+sudo mv ilo-pana /usr/local/bin/
+
+# Apple Silicon (M1/M2)
+curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.1.0_macOS_arm64.tar.gz | tar xz
+sudo mv ilo-pana /usr/local/bin/
+```
+
+#### Linux
+```bash
+# x86_64
+curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.1.0_linux_x86_64.tar.gz | tar xz
+sudo mv ilo-pana /usr/local/bin/
+
+# ARM64
+curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.1.0_linux_arm64.tar.gz | tar xz
+sudo mv ilo-pana /usr/local/bin/
+```
+
+#### Windows
+Download the Windows binary from [Releases page](https://github.com/hnkNkm/ilo-pana/releases/latest) and add it to your PATH.
+
+### Build from Source
+
+Requires Go 1.21 or later.
+
 ```bash
 # Clone the repository
 git clone https://github.com/hnkNkm/ilo-pana.git
 cd ilo-pana
 
-# Build from source
+# Build
 go build -o ilo-pana ./cmd/ilo-pana
 
-# Or install directly
+# Or install to $GOPATH/bin
 go install ./cmd/ilo-pana
 ```
 

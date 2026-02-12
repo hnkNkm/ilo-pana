@@ -1,0 +1,75 @@
+version: 2
+
+project_name: ilo-pana
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ilo-pana
+    main: ./cmd/ilo-pana
+    binary: ilo-pana
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Windowsの場合は.exe拡張子を追加
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: main
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- if eq .Os "darwin" }}macOS{{ else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ .Tag }}-SNAPSHOT"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+  groups:
+    - title: 'Features'
+      regexp: '^feat'
+    - title: 'Bug Fixes'
+      regexp: '^fix'
+
+release:
+  github:
+    owner: hnkNkm
+    name: ilo-pana
+  name_template: "v{{.Version}}"
+  header: |
+    ## ilo-pana v{{.Version}}
+    
+    Simple and powerful HTTP API testing tool.
+  footer: |
+    ---
+    **Full Changelog**: https://github.com/hnkNkm/ilo-pana/compare/{{.PreviousTag}}...{{.Tag}}
