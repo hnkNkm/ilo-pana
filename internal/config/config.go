@@ -8,16 +8,21 @@ import (
 	"os"
 	"strings"
 	"time"
+	
+	"ilo-pana/internal/env"
+	"ilo-pana/internal/variables"
 )
 
 // Config holds all configuration for an HTTP request
 type Config struct {
-	Method  string
-	URL     string
-	Headers map[string]string
-	Data    string
-	Timeout time.Duration
-	Verbose bool
+	Method    string
+	URL       string
+	Headers   map[string]string
+	Data      string
+	Timeout   time.Duration
+	Verbose   bool
+	Variables map[string]string
+	EnvFile   string
 }
 
 // headerList implements flag.Value to accumulate multiple -H flag values
@@ -37,17 +42,37 @@ func (h *headerList) Set(value string) error {
 	return nil
 }
 
+// varList implements flag.Value to accumulate multiple -var flag values
+type varList []string
+
+// String returns the string representation of the variable list
+func (v *varList) String() string {
+	return strings.Join(*v, ", ")
+}
+
+// Set appends a new variable to the list
+func (v *varList) Set(value string) error {
+	if value == "" {
+		return errors.New("variable value cannot be empty")
+	}
+	*v = append(*v, value)
+	return nil
+}
+
 // Parse parses command-line flags and returns a Config
 func Parse() (*Config, error) {
 	var (
 		method  = flag.String("X", "GET", "HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)")
 		headers headerList
+		vars    varList
 		data    = flag.String("d", "", "Request body data")
 		timeout = flag.Duration("timeout", 30*time.Second, "Request timeout")
 		verbose = flag.Bool("v", false, "Verbose output (show all headers without masking)")
+		envFile = flag.String("env-file", "", "Path to environment file (default: ./.env if exists)")
 	)
 
 	flag.Var(&headers, "H", "HTTP headers (format: 'Key: Value'), can be specified multiple times")
+	flag.Var(&vars, "var", "Variables (format: 'key=value'), can be specified multiple times")
 	
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS] URL\n\n", os.Args[0])
@@ -61,6 +86,10 @@ func Parse() (*Config, error) {
 		fmt.Fprintf(os.Stderr, "  %s -X POST -d '{\"name\":\"test\"}' https://api.example.com/users\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Multiple headers\n")
 		fmt.Fprintf(os.Stderr, "  %s -H 'Authorization: Bearer token' -H 'Accept: application/json' https://api.example.com/protected\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # With variables\n")
+		fmt.Fprintf(os.Stderr, "  %s -var BASE_URL=https://api.example.com -var TOKEN=abc123 '{{BASE_URL}}/users'\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Using environment file\n")
+		fmt.Fprintf(os.Stderr, "  %s --env-file .env.dev '{{BASE_URL}}/api/{{VERSION}}/users'\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Custom timeout\n")
 		fmt.Fprintf(os.Stderr, "  %s -timeout 10s https://slow-api.example.com/endpoint\n", os.Args[0])
 	}
@@ -74,20 +103,63 @@ func Parse() (*Config, error) {
 
 	targetURL := args[0]
 
+	// Load environment variables
+	envLoader := env.NewLoader()
+	
+	// Load from env file (either specified or default .env)
+	envFilePath := *envFile
+	if envFilePath == "" {
+		// Try to load default .env if it exists
+		envLoader.LoadDefault()
+	} else {
+		if err := envLoader.Load(envFilePath); err != nil {
+			return nil, fmt.Errorf("failed to load env file: %w", err)
+		}
+	}
+	
+	// Parse command-line variables
+	cliVars, err := variables.ParseVariables(vars)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse variables: %w", err)
+	}
+	
+	// Combine variables (CLI overrides env file)
+	allVars := envLoader.GetVariables()
+	for k, v := range cliVars {
+		allVars[k] = v
+	}
+
+	// Create variable expander
+	expander := variables.New()
+	expander.SetAll(allVars)
+	
+	// Expand variables in URL
+	expandedURL, warnings := expander.ExpandWithWarnings(targetURL)
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
+	}
+
+	// Parse and expand headers
 	parsedHeaders, err := parseHeaders(headers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse headers: %w", err)
 	}
+	expandedHeaders := expander.ExpandHeaders(parsedHeaders)
+	
+	// Expand variables in data
+	expandedData := expander.Expand(*data)
 
 	upperMethod := strings.ToUpper(*method)
 
 	return &Config{
-		Method:  upperMethod,
-		URL:     targetURL,
-		Headers: parsedHeaders,
-		Data:    *data,
-		Timeout: *timeout,
-		Verbose: *verbose,
+		Method:    upperMethod,
+		URL:       expandedURL,
+		Headers:   expandedHeaders,
+		Data:      expandedData,
+		Timeout:   *timeout,
+		Verbose:   *verbose,
+		Variables: allVars,
+		EnvFile:   envFilePath,
 	}, nil
 }
 
