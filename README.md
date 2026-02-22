@@ -10,6 +10,9 @@ A simple and powerful HTTP API testing tool written in Go. The name "ilo-pana" m
 - 📝 Support for all HTTP methods
 - ⚡ Multiple headers support
 - 🌐 Clean request/response formatting
+- 🔄 **NEW: Variable expansion with {{syntax}}**
+- 📁 **NEW: Environment file support (.env)**
+- 🍪 **NEW: Session management with cookies**
 
 ## Installation
 
@@ -20,22 +23,22 @@ Download the latest release from [GitHub Releases](https://github.com/hnkNkm/ilo
 #### macOS
 ```bash
 # Intel Mac
-curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.1.0_macOS_x86_64.tar.gz | tar xz
+curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.2.0_macOS_x86_64.tar.gz | tar xz
 sudo mv ilo-pana /usr/local/bin/
 
 # Apple Silicon (M1/M2)
-curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.1.0_macOS_arm64.tar.gz | tar xz
+curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.2.0_macOS_arm64.tar.gz | tar xz
 sudo mv ilo-pana /usr/local/bin/
 ```
 
 #### Linux
 ```bash
 # x86_64
-curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.1.0_linux_x86_64.tar.gz | tar xz
+curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.2.0_linux_x86_64.tar.gz | tar xz
 sudo mv ilo-pana /usr/local/bin/
 
 # ARM64
-curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.1.0_linux_arm64.tar.gz | tar xz
+curl -L https://github.com/hnkNkm/ilo-pana/releases/latest/download/ilo-pana_0.2.0_linux_arm64.tar.gz | tar xz
 sudo mv ilo-pana /usr/local/bin/
 ```
 
@@ -44,7 +47,7 @@ Download the Windows binary from [Releases page](https://github.com/hnkNkm/ilo-p
 
 ### Build from Source
 
-Requires Go 1.21 or later.
+Requires Go 1.24 or later.
 
 ```bash
 # Clone the repository
@@ -82,17 +85,48 @@ ilo-pana -timeout 10s https://slow-api.example.com
 
 ### Verbose mode (show sensitive headers)
 ```bash
-API_TESTER_VERBOSE=true ilo-pana -H 'X-API-Key: secret' https://api.example.com
+ilo-pana -v -H 'X-API-Key: secret' https://api.example.com
+```
+
+### Using variables
+```bash
+# Command-line variables
+ilo-pana -var BASE_URL=https://api.example.com -var TOKEN=abc123 \
+  -H "Authorization: Bearer {{TOKEN}}" "{{BASE_URL}}/users"
+
+# Environment file
+ilo-pana --env-file .env.dev "{{BASE_URL}}/api/{{VERSION}}/users"
+```
+
+### Session management
+```bash
+# Create session with login
+ilo-pana --session dev --session-new \
+  -X POST -d '{"user":"test","pass":"password"}' \
+  https://api.example.com/login
+
+# Use session for authenticated requests
+ilo-pana --session dev https://api.example.com/profile
+
+# Manage sessions
+ilo-pana session list
+ilo-pana session show dev
+ilo-pana session clear dev
 ```
 
 ## Options
 
 ```
-  -X string      HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) (default "GET")
-  -H value       HTTP headers (format: 'Key: Value'), can be specified multiple times
-  -d string      Request body data
-  -timeout       Request timeout (default 30s)
-  -v            Verbose output (show all headers without masking)
+  -X string              HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) (default "GET")
+  -H value               HTTP headers (format: 'Key: Value'), can be specified multiple times
+  -d string              Request body data
+  -timeout duration      Request timeout (default 30s)
+  -v                     Verbose output (show all headers without masking)
+  -var value             Variables (format: 'key=value'), can be specified multiple times
+  --env-file string      Path to environment file (default: ./.env if exists)
+  --session string       Session name to use for cookies and headers
+  --session-new          Create new session (overwrites existing)
+  --session-save-headers Save custom headers to session
 ```
 
 ## Examples
@@ -137,17 +171,35 @@ Headers like `Authorization`, `X-API-Key`, `Cookie`, etc., are automatically mas
 - `→` indicates outgoing request details
 - `←` indicates incoming response details
 
+### Variable Expansion (v0.2.0+)
+Use `{{variable}}` syntax to reference variables in URLs, headers, and request bodies:
+- Variables can be defined via `-var key=value` flags
+- Load from `.env` files with `--env-file`
+- Automatic fallback to system environment variables
+- Precedence: CLI args > env file > system environment
+
+### Session Management (v0.3.0+)
+Sessions persist cookies and custom headers between requests:
+- Cookies are automatically saved and sent
+- Custom headers can be saved with `--session-save-headers`
+- Sessions are stored in `~/.ilo-pana/sessions/`
+- Secure file permissions (0600) for session files
+
 ## Development
 
 ### Project Structure
 ```
 ilo-pana/
 ├── cmd/ilo-pana/        # Main entry point
+│   └── commands/       # Subcommands (session, etc.)
 ├── internal/            # Internal packages
 │   ├── client/         # HTTP client logic
 │   ├── config/         # Configuration and flag parsing
+│   ├── env/            # Environment file loader
 │   ├── request/        # Request building and validation
-│   └── response/       # Response processing and formatting
+│   ├── response/       # Response processing and formatting
+│   ├── session/        # Session management
+│   └── variables/      # Variable expansion
 └── README.md
 ```
 

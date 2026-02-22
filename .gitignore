@@ -64,3 +64,6 @@ debug
 
 # Claude artifacts
 .claude/
+
+# docs
+docs/
