@@ -15,14 +15,17 @@ import (
 
 // Config holds all configuration for an HTTP request
 type Config struct {
-	Method    string
-	URL       string
-	Headers   map[string]string
-	Data      string
-	Timeout   time.Duration
-	Verbose   bool
-	Variables map[string]string
-	EnvFile   string
+	Method         string
+	URL            string
+	Headers        map[string]string
+	Data           string
+	Timeout        time.Duration
+	Verbose        bool
+	Variables      map[string]string
+	EnvFile        string
+	SessionName    string
+	SessionNew     bool
+	SessionHeaders bool
 }
 
 // headerList implements flag.Value to accumulate multiple -H flag values
@@ -62,13 +65,16 @@ func (v *varList) Set(value string) error {
 // Parse parses command-line flags and returns a Config
 func Parse() (*Config, error) {
 	var (
-		method  = flag.String("X", "GET", "HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)")
-		headers headerList
-		vars    varList
-		data    = flag.String("d", "", "Request body data")
-		timeout = flag.Duration("timeout", 30*time.Second, "Request timeout")
-		verbose = flag.Bool("v", false, "Verbose output (show all headers without masking)")
-		envFile = flag.String("env-file", "", "Path to environment file (default: ./.env if exists)")
+		method         = flag.String("X", "GET", "HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)")
+		headers        headerList
+		vars           varList
+		data           = flag.String("d", "", "Request body data")
+		timeout        = flag.Duration("timeout", 30*time.Second, "Request timeout")
+		verbose        = flag.Bool("v", false, "Verbose output (show all headers without masking)")
+		envFile        = flag.String("env-file", "", "Path to environment file (default: ./.env if exists)")
+		sessionName    = flag.String("session", "", "Session name to use for cookies and headers")
+		sessionNew     = flag.Bool("session-new", false, "Create new session (overwrites existing)")
+		sessionHeaders = flag.Bool("session-save-headers", false, "Save custom headers to session")
 	)
 
 	flag.Var(&headers, "H", "HTTP headers (format: 'Key: Value'), can be specified multiple times")
@@ -90,6 +96,8 @@ func Parse() (*Config, error) {
 		fmt.Fprintf(os.Stderr, "  %s -var BASE_URL=https://api.example.com -var TOKEN=abc123 '{{BASE_URL}}/users'\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Using environment file\n")
 		fmt.Fprintf(os.Stderr, "  %s --env-file .env.dev '{{BASE_URL}}/api/{{VERSION}}/users'\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Using sessions\n")
+		fmt.Fprintf(os.Stderr, "  %s --session dev --session-new https://api.example.com/login\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Custom timeout\n")
 		fmt.Fprintf(os.Stderr, "  %s -timeout 10s https://slow-api.example.com/endpoint\n", os.Args[0])
 	}
@@ -152,14 +160,17 @@ func Parse() (*Config, error) {
 	upperMethod := strings.ToUpper(*method)
 
 	return &Config{
-		Method:    upperMethod,
-		URL:       expandedURL,
-		Headers:   expandedHeaders,
-		Data:      expandedData,
-		Timeout:   *timeout,
-		Verbose:   *verbose,
-		Variables: allVars,
-		EnvFile:   envFilePath,
+		Method:         upperMethod,
+		URL:            expandedURL,
+		Headers:        expandedHeaders,
+		Data:           expandedData,
+		Timeout:        *timeout,
+		Verbose:        *verbose,
+		Variables:      allVars,
+		EnvFile:        envFilePath,
+		SessionName:    *sessionName,
+		SessionNew:     *sessionNew,
+		SessionHeaders: *sessionHeaders,
 	}, nil
 }
 

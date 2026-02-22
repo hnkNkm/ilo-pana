@@ -8,11 +8,24 @@ import (
 	"fmt"
 	"os"
 
+	"ilo-pana/cmd/ilo-pana/commands"
 	"ilo-pana/internal/client"
 	"ilo-pana/internal/config"
 )
 
 func main() {
+	// Check if this is a subcommand
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "session":
+			commands.SessionCommand(os.Args[2:])
+			return
+		case "help", "--help", "-h":
+			printHelp()
+			return
+		}
+	}
+	
 	// Parse command-line flags and configuration
 	cfg, err := config.Parse()
 	if err != nil {
@@ -22,9 +35,25 @@ func main() {
 	}
 
 	// Create and execute the HTTP client
-	httpClient := client.New(cfg)
+	httpClient, err := client.New(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	
 	if err := httpClient.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func printHelp() {
+	fmt.Println("ilo-pana - A simple and powerful HTTP API testing tool")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  ilo-pana [OPTIONS] URL        Make an HTTP request")
+	fmt.Println("  ilo-pana session <command>    Manage sessions")
+	fmt.Println()
+	fmt.Println("Run 'ilo-pana --help' for HTTP options")
+	fmt.Println("Run 'ilo-pana session --help' for session commands")
 }
