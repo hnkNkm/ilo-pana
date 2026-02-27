@@ -111,8 +111,11 @@ func TestClientExecute(t *testing.T) {
 			os.Stdout = wOut
 			os.Stderr = wErr
 
-			client := New(tt.config)
-			err := client.Execute()
+			client, err := New(tt.config)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			err = client.Execute()
 
 			// Restore stdout and stderr
 			wOut.Close()
@@ -178,8 +181,11 @@ func TestClientWithInvalidConfig(t *testing.T) {
 			os.Stdout = wOut
 			os.Stderr = wErr
 
-			client := New(tt.config)
-			err := client.Execute()
+			client, err := New(tt.config)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			err = client.Execute()
 
 			// Restore stdout and stderr
 			wOut.Close()
@@ -230,7 +236,7 @@ func BenchmarkClientExecute(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		client := New(cfg)
+		client, _ := New(cfg)
 		_ = client.Execute()
 	}
 }
