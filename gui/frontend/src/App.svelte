@@ -14,18 +14,18 @@
 	import { Plus, Trash2, Send, Copy, Download } from '@lucide/svelte/icons';
 
 	// State variables
-	let url = 'https://api.example.com/data';
-	let method = 'GET';
-	let requestBody = '';
-	let headers: Array<{key: string, value: string}> = [
+	let url = $state('https://api.example.com/data');
+	let selectedMethod = $state('GET');
+	let requestBody = $state('');
+	let headers = $state<Array<{key: string, value: string}>>([
 		{ key: 'Content-Type', value: 'application/json' }
-	];
-	let response = '';
-	let responseStatus = 0;
-	let responseHeaders = '';
-	let responseTime = 0;
-	let isLoading = false;
-	let error = '';
+	]);
+	let response = $state('');
+	let responseStatus = $state(0);
+	let responseHeaders = $state('');
+	let responseTime = $state(0);
+	let isLoading = $state(false);
+	let error = $state('');
 
 	// Methods
 	const httpMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
@@ -62,7 +62,7 @@
 			response = JSON.stringify({
 				message: "This is a mock response",
 				timestamp: new Date().toISOString(),
-				method,
+				method: selectedMethod,
 				url,
 				headers: headers.filter(h => h.key && h.value)
 			}, null, 2);
@@ -144,10 +144,10 @@ Content-Length: ${response.length}`;
 			<CardContent class="space-y-4 pt-6">
 				<!-- URL and Method -->
 				<div class="flex gap-3">
-					<Select bind:value={method}>
+					<Select type="single" bind:value={selectedMethod}>
 						<SelectTrigger class="w-32 font-semibold border-2 hover:border-blue-300 focus:border-blue-500 transition-colors">
-							<span class={method === 'GET' ? 'text-green-600' : method === 'POST' ? 'text-blue-600' : method === 'PUT' ? 'text-yellow-600' : method === 'DELETE' ? 'text-red-600' : 'text-purple-600'}>
-								{method}
+							<span class={selectedMethod === 'GET' ? 'text-green-600' : selectedMethod === 'POST' ? 'text-blue-600' : selectedMethod === 'PUT' ? 'text-yellow-600' : selectedMethod === 'DELETE' ? 'text-red-600' : 'text-purple-600'}>
+								{selectedMethod || 'GET'}
 							</span>
 						</SelectTrigger>
 						<SelectContent>
@@ -185,7 +185,7 @@ Content-Length: ${response.length}`;
 				<Tabs value="headers" class="w-full">
 					<TabsList class="grid w-full grid-cols-2">
 						<TabsTrigger value="headers">Headers</TabsTrigger>
-						<TabsTrigger value="body" disabled={method === 'GET' || method === 'HEAD'}>Body</TabsTrigger>
+						<TabsTrigger value="body" disabled={selectedMethod === 'GET' || selectedMethod === 'HEAD'}>Body</TabsTrigger>
 					</TabsList>
 					
 					<!-- Headers Tab -->
