@@ -24,6 +24,9 @@
             gomodifytags
             gotests
             impl
+            # For GUI development
+            nodejs_22
+            pnpm
           ];
 
           shellHook = ''
