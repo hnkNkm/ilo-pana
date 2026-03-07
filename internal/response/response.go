@@ -21,6 +21,15 @@ var SensitiveHeaders = map[string]bool{
 	"proxy-authorization": true,
 }
 
+// ResponseData is a structured response for GUI consumption
+type ResponseData struct {
+	StatusCode int               `json:"statusCode"`
+	Status     string            `json:"status"`
+	Headers    map[string]string  `json:"headers"`
+	Body       string            `json:"body"`
+	ElapsedMs  int64             `json:"elapsedMs"`
+}
+
 // Handler processes and displays HTTP responses
 type Handler struct {
 	Verbose bool
@@ -29,6 +38,56 @@ type Handler struct {
 // New creates a new response handler
 func New(verbose bool) *Handler {
 	return &Handler{Verbose: verbose}
+}
+
+// ProcessToStruct processes the HTTP response and returns structured data for GUI
+func (h *Handler) ProcessToStruct(resp *http.Response, elapsed time.Duration) (*ResponseData, error) {
+	// Collect headers with masking
+	headers := make(map[string]string)
+	for key, values := range resp.Header {
+		masked := make([]string, len(values))
+		for i, v := range values {
+			masked[i] = h.maskSensitiveValue(key, v)
+		}
+		headers[key] = strings.Join(masked, ", ")
+	}
+
+	// Read response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	bodyStr := ""
+	if len(respBody) > 0 {
+		contentType := resp.Header.Get("Content-Type")
+		if strings.Contains(contentType, "application/json") {
+			bodyStr = formatJSONAsString(string(respBody))
+		} else {
+			bodyStr = string(respBody)
+		}
+	}
+
+	return &ResponseData{
+		StatusCode: resp.StatusCode,
+		Status:     resp.Status,
+		Headers:    headers,
+		Body:       bodyStr,
+		ElapsedMs:  elapsed.Milliseconds(),
+	}, nil
+}
+
+// formatJSONAsString pretty-prints JSON and returns as string
+func formatJSONAsString(jsonStr string) string {
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return jsonStr
+	}
+	prettyJSON, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return jsonStr
+	}
+	return string(prettyJSON)
 }
 
 // Process handles the HTTP response and prints it
