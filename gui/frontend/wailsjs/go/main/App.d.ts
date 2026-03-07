@@ -7,4 +7,6 @@ export function ExecuteRequest(arg1:main.RequestParams):Promise<response.Respons
 
 export function ExecuteRequestSimple(arg1:string,arg2:string,arg3:string,arg4:Record<string, string>):Promise<response.ResponseData>;
 
+export function ExecuteRequestWithTimeout(arg1:string,arg2:string,arg3:string,arg4:Record<string, string>,arg5:number):Promise<response.ResponseData>;
+
 export function Greet(arg1:string):Promise<string>;

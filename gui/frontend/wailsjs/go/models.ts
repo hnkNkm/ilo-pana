@@ -5,6 +5,7 @@ export namespace main {
 	    URL: string;
 	    Body: string;
 	    Headers: Record<string, string>;
+	    TimeoutMs: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestParams(source);
@@ -16,6 +17,7 @@ export namespace main {
 	        this.URL = source["URL"];
 	        this.Body = source["Body"];
 	        this.Headers = source["Headers"];
+	        this.TimeoutMs = source["TimeoutMs"];
 	    }
 	}
 
