@@ -9,7 +9,9 @@
     "verbatimModuleSyntax": true,
     "paths": {
       "$lib": ["./src/lib"],
-      "$lib/*": ["./src/lib/*"]
+      "$lib/*": ["./src/lib/*"],
+      "$wailsjs": ["./wailsjs"],
+      "$wailsjs/*": ["./wailsjs/*"]
     },
     /**
      * Typecheck JS in `.svelte` and `.js` files by default.

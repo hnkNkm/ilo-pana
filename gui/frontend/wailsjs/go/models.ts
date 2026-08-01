@@ -6,6 +6,9 @@ export namespace main {
 	    Body: string;
 	    Headers: Record<string, string>;
 	    TimeoutMs: number;
+	    SessionName: string;
+	    SessionNew: boolean;
+	    Variables: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestParams(source);
@@ -18,6 +21,9 @@ export namespace main {
 	        this.Body = source["Body"];
 	        this.Headers = source["Headers"];
 	        this.TimeoutMs = source["TimeoutMs"];
+	        this.SessionName = source["SessionName"];
+	        this.SessionNew = source["SessionNew"];
+	        this.Variables = source["Variables"];
 	    }
 	}
 
