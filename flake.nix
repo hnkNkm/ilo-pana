@@ -27,6 +27,7 @@
             # For GUI development
             nodejs_22
             pnpm
+            wails
           ];
 
           shellHook = ''

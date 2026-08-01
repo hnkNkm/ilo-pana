@@ -33,9 +33,9 @@ Release: push a `v*` tag → GitHub Actions runs GoReleaser v2 (`.goreleaser.yml
 - **Fresh clone breaks `go build ./...`**: `gui/main.go` has `//go:embed all:frontend/dist`, but `gui/frontend/dist` is gitignored. Build the frontend first (`cd gui/frontend && pnpm install && pnpm build`) or build only `./cmd/ilo-pana`.
 - **`internal/config/parser.go` is dead code**: `HeaderParser`/`URLValidator` there have zero callers. The live paths are `parseHeaders()` in `config.go` and `request.ValidateURL()` in `internal/request/request.go`. Edit those, not parser.go.
 - **CLAUDE.md stale claims**: verbose mode is the `-v` flag (there is NO `API_TESTER_VERBOSE` env var); localhost/127.0.0.1 is NOT blocked — `request.ValidateURL` only prints a warning to stderr.
-- **Wails CLI is not installed by the dev environment** (not in `flake.nix` either). Get it with `go install github.com/wailsapp/wails/v2/cmd/wails@latest`.
+- **Wails CLI comes from the Nix flake** (`wails` package in `flake.nix`, pinned via `flake.lock`). Do NOT `go install` it — a stray `~/go/bin/wails` shadows the nixpkgs one and is removed by design.
 - **`gui/frontend/wailsjs/` is generated but committed**. After changing exported methods on `App` in `gui/app.go`, regenerate bindings with `wails generate module` (or via `wails dev/build`), and commit the result.
-- Dev shell: Nix flake + direnv (`.envrc` = `use flake`) provides Go, nodejs_22, pnpm, Go tooling. Without Nix, install Go 1.24+ and pnpm manually.
+- Dev shell: Nix flake + direnv (`.envrc` = `use flake`) provides Go, nodejs_22, pnpm, wails CLI, Go tooling. After editing `flake.nix`, run `nix flake update nixpkgs` + `direnv reload`. Without Nix, install Go 1.24+, pnpm, and the wails CLI manually.
 
 ## Conventions
 
