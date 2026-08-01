@@ -1,5 +1,6 @@
 <script lang="ts">
 	import './app.css';
+	import { onMount } from 'svelte';
 	import { ExecuteRequest } from '$wailsjs/go/main/App';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -21,6 +22,7 @@
 	let headers = $state<Array<{key: string, value: string}>>([
 		{ key: 'Content-Type', value: 'application/json' }
 	]);
+	let queryParams = $state<Array<{key: string, value: string, enabled: boolean}>>([]);
 	let variables = $state<Array<{key: string, value: string}>>([]);
 	let timeoutSec = $state(30);
 	let sessionName = $state('');
@@ -31,6 +33,10 @@
 	let responseTime = $state(0);
 	let isLoading = $state(false);
 	let error = $state('');
+	let authType = $state('none');
+	let authUsername = $state('');
+	let authPassword = $state('');
+	let authToken = $state('');
 
 	// Request history (persisted in localStorage)
 	const HISTORY_KEY = 'ilo-pana-request-history';
@@ -78,6 +84,7 @@
 	function restoreRequest(entry: HistoryEntry) {
 		selectedMethod = entry.method;
 		url = entry.url;
+		parseQueryParams();
 		requestBody = entry.body;
 		headers = entry.headers.length ? entry.headers : [{ key: 'Content-Type', value: 'application/json' }];
 		response = '';
@@ -95,6 +102,19 @@
 		}
 	}
 
+	// Keyboard shortcuts
+	function handleKeydown(e: KeyboardEvent) {
+		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+			e.preventDefault();
+			if (!isLoading && url) sendRequest();
+		}
+	}
+
+	onMount(() => {
+		window.addEventListener('keydown', handleKeydown);
+		return () => window.removeEventListener('keydown', handleKeydown);
+	});
+
 	const historyUrls = $derived([...new Set(history.map(h => h.url))]);
 
 	// Methods
@@ -111,6 +131,72 @@
 	function updateHeader(index: number, field: 'key' | 'value', value: string) {
 		headers[index][field] = value;
 		headers = headers;
+	}
+
+	// Query parameters — parsed from / merged into the URL
+	function parseQueryParams() {
+		const q = url.split('?')[1];
+		const params: Array<{key: string, value: string, enabled: boolean}> = [];
+		if (q) {
+			for (const part of q.split('&')) {
+				if (!part) continue;
+				const eq = part.indexOf('=');
+				const rawKey = eq >= 0 ? part.slice(0, eq) : part;
+				const rawValue = eq >= 0 ? part.slice(eq + 1) : '';
+				try {
+					params.push({ key: decodeURIComponent(rawKey), value: decodeURIComponent(rawValue), enabled: true });
+				} catch {
+					params.push({ key: rawKey, value: rawValue, enabled: true });
+				}
+			}
+		}
+		queryParams = params;
+	}
+
+	function buildUrlFromParams() {
+		const base = url.split('?')[0];
+		const parts = queryParams
+			.filter(p => p.enabled && p.key.trim())
+			.map(p => `${encodeURIComponent(p.key.trim())}=${encodeURIComponent(p.value)}`);
+		url = parts.length ? `${base}?${parts.join('&')}` : base;
+	}
+
+	function addQueryParam() {
+		queryParams = [...queryParams, { key: '', value: '', enabled: true }];
+	}
+
+	function removeQueryParam(index: number) {
+		queryParams = queryParams.filter((_, i) => i !== index);
+		buildUrlFromParams();
+	}
+
+	function updateQueryParam(index: number, field: 'key' | 'value' | 'enabled', value: string | boolean) {
+		if (field === 'enabled') {
+			queryParams[index].enabled = value as boolean;
+		} else {
+			queryParams[index][field] = value as string;
+		}
+		queryParams = queryParams;
+		buildUrlFromParams();
+	}
+
+	// Auth helpers
+	function btoaUtf8(s: string): string {
+		return btoa(unescape(encodeURIComponent(s)));
+	}
+
+	function authPreview(): string {
+		if (authType === 'basic') {
+			return authUsername.trim()
+				? 'Authorization: Basic ••••••'
+				: 'Enter username and password to generate the Authorization header';
+		}
+		if (authType === 'bearer') {
+			return authToken.trim()
+				? 'Authorization: Bearer ••••••'
+				: 'Enter a token to generate the Authorization header';
+		}
+		return '';
 	}
 
 	function addVariable() {
@@ -147,6 +233,13 @@
 			if (h.key?.trim()) {
 				headersMap[h.key.trim()] = h.value ?? '';
 			}
+		}
+
+		// Auth header (overrides a manually-entered Authorization header)
+		if (authType === 'basic' && authUsername.trim()) {
+			headersMap['Authorization'] = `Basic ${btoaUtf8(`${authUsername}:${authPassword}`)}`;
+		} else if (authType === 'bearer' && authToken.trim()) {
+			headersMap['Authorization'] = `Bearer ${authToken}`;
 		}
 
 		const variablesMap: Record<string, string> = {};
@@ -302,6 +395,7 @@
 						type="url"
 						placeholder="Enter request URL (e.g., https://pokeapi.co/api/v2/pokemon/pikachu)"
 						bind:value={url}
+						oninput={parseQueryParams}
 						list="url-history"
 						class="flex-1 border-2 hover:border-blue-300 focus:border-blue-500 transition-colors font-mono"
 					/>
@@ -355,13 +449,62 @@
 				</div>
 
 				<!-- Request Configuration Tabs -->
-				<Tabs value="headers" class="w-full">
-					<TabsList class="grid w-full grid-cols-3">
+				<Tabs value="params" class="w-full">
+					<TabsList class="grid w-full grid-cols-5">
+						<TabsTrigger value="params">Params</TabsTrigger>
 						<TabsTrigger value="headers">Headers</TabsTrigger>
+						<TabsTrigger value="auth">Auth</TabsTrigger>
 						<TabsTrigger value="variables">Variables</TabsTrigger>
 						<TabsTrigger value="body" disabled={selectedMethod === 'GET' || selectedMethod === 'HEAD'}>Body</TabsTrigger>
 					</TabsList>
-					
+
+					<!-- Params Tab -->
+					<TabsContent value="params" class="space-y-2">
+						<p class="text-xs text-slate-500 dark:text-slate-400">
+							Query parameters are merged into the URL automatically.
+						</p>
+						<div class="space-y-2">
+							{#each queryParams as param, i}
+								<div class="flex gap-2 items-center">
+									<input
+										type="checkbox"
+										checked={param.enabled}
+										onchange={(e) => updateQueryParam(i, 'enabled', e.currentTarget.checked)}
+										class="h-4 w-4 shrink-0"
+										title="Enable / disable this parameter"
+									/>
+									<Input
+										placeholder="Parameter name"
+										value={param.key}
+										oninput={(e) => updateQueryParam(i, 'key', e.currentTarget.value)}
+										class="flex-1"
+									/>
+									<Input
+										placeholder="Parameter value"
+										value={param.value}
+										oninput={(e) => updateQueryParam(i, 'value', e.currentTarget.value)}
+										class="flex-1"
+									/>
+									<Button
+										variant="outline"
+										size="icon"
+										onclick={() => removeQueryParam(i)}
+									>
+										<Trash2 class="h-4 w-4" />
+									</Button>
+								</div>
+							{/each}
+						</div>
+						<Button
+							variant="outline"
+							onclick={addQueryParam}
+							class="w-full"
+						>
+							<Plus class="mr-2 h-4 w-4" />
+							Add Parameter
+						</Button>
+					</TabsContent>
+
 					<!-- Headers Tab -->
 					<TabsContent value="headers" class="space-y-2">
 						<div class="space-y-2">
@@ -397,6 +540,34 @@
 							<Plus class="mr-2 h-4 w-4" />
 							Add Header
 						</Button>
+					</TabsContent>
+
+					<!-- Auth Tab -->
+					<TabsContent value="auth" class="space-y-3">
+						<div class="space-y-2">
+							<Label for="auth-type" class="text-sm">Auth Type</Label>
+							<Select type="single" bind:value={authType}>
+								<SelectTrigger id="auth-type" class="w-full">
+									<span>{authType === 'none' ? 'No Auth' : authType === 'basic' ? 'Basic Auth' : 'Bearer Token'}</span>
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="none">No Auth</SelectItem>
+									<SelectItem value="basic">Basic Auth</SelectItem>
+									<SelectItem value="bearer">Bearer Token</SelectItem>
+								</SelectContent>
+							</Select>
+							{#if authType === 'basic'}
+								<Input type="text" placeholder="Username" bind:value={authUsername} class="font-mono" />
+								<Input type="password" placeholder="Password" bind:value={authPassword} class="font-mono" />
+							{:else if authType === 'bearer'}
+								<Input type="password" placeholder="Token" bind:value={authToken} class="font-mono" />
+							{/if}
+							{#if authType !== 'none'}
+								<div class="rounded-md bg-slate-100 dark:bg-slate-800 px-3 py-2 font-mono text-xs text-slate-600 dark:text-slate-300 break-all">
+									{authPreview()}
+								</div>
+							{/if}
+						</div>
 					</TabsContent>
 
 					<!-- Variables Tab -->
