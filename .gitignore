@@ -23,8 +23,14 @@ go.work.sum
 # Build directories
 /bin/
 /dist/
-/build/
 /tmp/
+
+# Wails build output (build/ assets like icons are tracked)
+/build/bin/
+
+# Wails frontend
+node_modules
+frontend/dist
 
 # Binary name (in case it's built in root)
 /ilo-pana

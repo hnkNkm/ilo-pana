@@ -40,33 +40,31 @@ api-tester/
 ├── cmd/               # CLI版
 │   └── ilo-pana/
 │       └── main.go
-├── gui/               # GUI版（Wails）
-│   ├── app.go         # Wailsバックエンドブリッジ
-│   ├── main.go        # エントリーポイント
-│   ├── embed.go       # フロントエンドアセット埋め込み
-│   ├── wails.json     # Wails設定
-│   ├── build/         # ビルド出力
-│   └── frontend/      # Svelteフロントエンド
-│       ├── src/
-│       │   ├── lib/
-│       │   │   ├── components/
-│       │   │   │   ├── RequestBuilder.svelte
-│       │   │   │   ├── ResponseViewer.svelte
-│       │   │   │   ├── CollectionExplorer.svelte
-│       │   │   │   ├── EnvironmentManager.svelte
-│       │   │   │   └── ui/  # shadcn-svelte
-│       │   │   ├── stores/
-│       │   │   │   ├── request.ts
-│       │   │   │   ├── collections.ts
-│       │   │   │   └── environment.ts
-│       │   │   └── wailsjs/  # Wails生成バインディング
-│       │   ├── App.svelte
-│       │   └── main.ts
-│       ├── package.json
-│       ├── pnpm-lock.yaml
-│       ├── vite.config.ts
-│       ├── tsconfig.json
-│       └── tailwind.config.js
+├── main.go            # GUIエントリーポイント（Wails）
+├── app.go             # Wailsバックエンドブリッジ
+├── wails.json         # Wails設定（リポジトリルート = Wailsプロジェクトルート）
+├── build/             # Wailsビルドアセット（アイコン等）
+├── frontend/          # Svelteフロントエンド
+│   ├── src/
+│   │   ├── lib/
+│   │   │   ├── components/
+│   │   │   │   ├── RequestBuilder.svelte
+│   │   │   │   ├── ResponseViewer.svelte
+│   │   │   │   ├── CollectionExplorer.svelte
+│   │   │   │   ├── EnvironmentManager.svelte
+│   │   │   │   └── ui/  # shadcn-svelte
+│   │   │   ├── stores/
+│   │   │   │   ├── request.ts
+│   │   │   │   ├── collections.ts
+│   │   │   │   └── environment.ts
+│   │   │   └── wailsjs/  # Wails生成バインディング
+│   │   ├── App.svelte
+│   │   └── main.ts
+│   ├── package.json
+│   ├── pnpm-lock.yaml
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   └── tailwind.config.js
 ├── docs/              # ドキュメント
 ├── go.mod            # 共通依存関係
 ├── go.sum
@@ -109,7 +107,7 @@ api-tester/
 ## Wails Backend API
 
 ```go
-// gui/app.go
+// app.go
 
 type App struct {
     ctx    context.Context
