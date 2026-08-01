@@ -10,6 +10,7 @@ import (
 	"ilo-pana/internal/config"
 	"ilo-pana/internal/request"
 	"ilo-pana/internal/response"
+	"ilo-pana/internal/variables"
 )
 
 // App struct
@@ -35,20 +36,36 @@ func (a *App) Greet(name string) string {
 
 // RequestParams holds parameters for ExecuteRequest from the frontend
 type RequestParams struct {
-	Method    string
-	URL       string
-	Body      string
-	Headers   map[string]string
-	TimeoutMs int // Timeout in milliseconds, default 30000 (30 seconds)
+	Method      string
+	URL         string
+	Body        string
+	Headers     map[string]string
+	TimeoutMs   int // Timeout in milliseconds, default 30000 (30 seconds)
+	SessionName string
+	SessionNew  bool
+	Variables   map[string]string
 }
 
 // ExecuteRequest executes an HTTP request and returns structured response data for GUI
 func (a *App) ExecuteRequest(params RequestParams) (*response.ResponseData, error) {
+	method := strings.ToUpper(params.Method)
+
+	// Expand {{VAR}} variables in URL, headers, and body before validation
+	expandedURL := params.URL
+	expandedHeaders := params.Headers
+	expandedBody := params.Body
+	if len(params.Variables) > 0 {
+		expander := variables.New()
+		expander.SetAll(params.Variables)
+		expandedURL = expander.Expand(params.URL)
+		expandedHeaders = expander.ExpandHeaders(params.Headers)
+		expandedBody = expander.Expand(params.Body)
+	}
+
 	// Validate
-	if err := request.ValidateURL(params.URL); err != nil {
+	if err := request.ValidateURL(expandedURL); err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
-	method := strings.ToUpper(params.Method)
 	if err := request.ValidateMethod(method); err != nil {
 		return nil, err
 	}
@@ -64,12 +81,16 @@ func (a *App) ExecuteRequest(params RequestParams) (*response.ResponseData, erro
 	}
 
 	cfg := &config.Config{
-		Method:  method,
-		URL:     params.URL,
-		Data:    params.Body,
-		Headers: params.Headers,
-		Timeout: timeout,
-		Verbose: false,
+		Method:         method,
+		URL:            expandedURL,
+		Data:           expandedBody,
+		Headers:        expandedHeaders,
+		Timeout:        timeout,
+		Verbose:        false,
+		SessionName:    params.SessionName,
+		SessionNew:     params.SessionNew,
+		SessionHeaders: false,
+		Variables:      params.Variables,
 	}
 	if cfg.Headers == nil {
 		cfg.Headers = make(map[string]string)

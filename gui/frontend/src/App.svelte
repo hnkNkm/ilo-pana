@@ -1,6 +1,6 @@
 <script lang="ts">
 	import './app.css';
-	import { ExecuteRequestSimple } from '$wailsjs/go/main/App';
+	import { ExecuteRequest } from '$wailsjs/go/main/App';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -12,7 +12,7 @@
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
 	import { Separator } from '$lib/components/ui/separator';
 	import { Alert, AlertDescription } from '$lib/components/ui/alert';
-	import { Plus, Trash2, Send, Copy, Download } from '@lucide/svelte/icons';
+	import { Plus, Trash2, Send, Copy, Download, Clock } from '@lucide/svelte/icons';
 
 	// State variables
 	let url = $state('https://pokeapi.co/api/v2/pokemon/pikachu');
@@ -21,12 +21,81 @@
 	let headers = $state<Array<{key: string, value: string}>>([
 		{ key: 'Content-Type', value: 'application/json' }
 	]);
+	let variables = $state<Array<{key: string, value: string}>>([]);
+	let timeoutSec = $state(30);
+	let sessionName = $state('');
+	let sessionNew = $state(false);
 	let response = $state('');
 	let responseStatus = $state(0);
 	let responseHeaders = $state('');
 	let responseTime = $state(0);
 	let isLoading = $state(false);
 	let error = $state('');
+
+	// Request history (persisted in localStorage)
+	const HISTORY_KEY = 'ilo-pana-request-history';
+	const HISTORY_MAX = 10;
+
+	interface HistoryEntry {
+		method: string;
+		url: string;
+		headers: {key: string, value: string}[];
+		body: string;
+		timestamp: number;
+	}
+
+	function loadHistory(): HistoryEntry[] {
+		try {
+			const raw = localStorage.getItem(HISTORY_KEY);
+			if (!raw) return [];
+			const parsed = JSON.parse(raw);
+			return Array.isArray(parsed) ? parsed : [];
+		} catch {
+			return [];
+		}
+	}
+
+	let history = $state<HistoryEntry[]>(loadHistory());
+
+	function saveToHistory() {
+		const entry: HistoryEntry = {
+			method: selectedMethod,
+			url,
+			headers: headers.filter(h => h.key?.trim()),
+			body: requestBody,
+			timestamp: Date.now(),
+		};
+		// Deduplicate by method + URL (keep the latest)
+		const filtered = history.filter(h => !(h.method === entry.method && h.url === entry.url));
+		history = [entry, ...filtered].slice(0, HISTORY_MAX);
+		try {
+			localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+		} catch {
+			// localStorage unavailable (private mode etc.) - history just won't persist
+		}
+	}
+
+	function restoreRequest(entry: HistoryEntry) {
+		selectedMethod = entry.method;
+		url = entry.url;
+		requestBody = entry.body;
+		headers = entry.headers.length ? entry.headers : [{ key: 'Content-Type', value: 'application/json' }];
+		response = '';
+		responseStatus = 0;
+		responseHeaders = '';
+		error = '';
+	}
+
+	function clearHistory() {
+		history = [];
+		try {
+			localStorage.removeItem(HISTORY_KEY);
+		} catch {
+			// ignore
+		}
+	}
+
+	const historyUrls = $derived([...new Set(history.map(h => h.url))]);
 
 	// Methods
 	const httpMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
@@ -42,6 +111,19 @@
 	function updateHeader(index: number, field: 'key' | 'value', value: string) {
 		headers[index][field] = value;
 		headers = headers;
+	}
+
+	function addVariable() {
+		variables = [...variables, { key: '', value: '' }];
+	}
+
+	function removeVariable(index: number) {
+		variables = variables.filter((_, i) => i !== index);
+	}
+
+	function updateVariable(index: number, field: 'key' | 'value', value: string) {
+		variables[index][field] = value;
+		variables = variables;
 	}
 
 	function extractErrorMessage(err: unknown): string {
@@ -67,8 +149,24 @@
 			}
 		}
 
+		const variablesMap: Record<string, string> = {};
+		for (const v of variables) {
+			if (v.key?.trim()) {
+				variablesMap[v.key.trim()] = v.value ?? '';
+			}
+		}
+
 		try {
-			const result = await ExecuteRequestSimple(selectedMethod, url, requestBody, headersMap);
+			const result = await ExecuteRequest({
+				Method: selectedMethod,
+				URL: url,
+				Body: requestBody,
+				Headers: headersMap,
+				TimeoutMs: timeoutSec * 1000,
+				SessionName: sessionName,
+				SessionNew: sessionNew,
+				Variables: variablesMap,
+			});
 
 			responseStatus = result.statusCode;
 			responseTime = result.elapsedMs;
@@ -76,6 +174,8 @@
 			responseHeaders = Object.entries(result.headers)
 				.map(([k, v]) => `${k}: ${v}`)
 				.join('\n');
+
+			saveToHistory();
 		} catch (err) {
 			error = extractErrorMessage(err);
 		} finally {
@@ -115,15 +215,25 @@
 		return 'bg-gradient-to-r from-gray-500 to-gray-600 text-white font-bold';
 	}
 
+	function escapeHtml(s: string): string {
+		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	}
+
 	function formatJson(json: string): string {
 		if (!json) return '';
 		try {
 			const parsed = JSON.parse(json);
 			// Standard JSON formatting with 2 spaces
 			const formatted = JSON.stringify(parsed, null, 2);
-			
+
+			// Escape HTML first so untrusted response content cannot inject
+			// elements/scripts, then apply syntax highlighting on the escaped text.
+			// Quotes are intentionally NOT escaped: they are safe in text context
+			// and the highlighting regexes rely on them.
+			const escaped = escapeHtml(formatted);
+
 			// Simple, clean syntax highlighting
-			return formatted
+			return escaped
 				// Keys - light blue
 				.replace(/"([^"]+)":/g, '<span class="text-sky-400">"$1"</span>:')
 				// String values - light green  
@@ -192,8 +302,14 @@
 						type="url"
 						placeholder="Enter request URL (e.g., https://pokeapi.co/api/v2/pokemon/pikachu)"
 						bind:value={url}
+						list="url-history"
 						class="flex-1 border-2 hover:border-blue-300 focus:border-blue-500 transition-colors font-mono"
 					/>
+					<datalist id="url-history">
+						{#each historyUrls as u}
+							<option value={u}></option>
+						{/each}
+					</datalist>
 					<Button 
 						onclick={sendRequest} 
 						disabled={isLoading || !url}
@@ -209,10 +325,40 @@
 					</Button>
 				</div>
 
+				<!-- Options row: timeout, session -->
+				<div class="flex flex-wrap items-end gap-3">
+					<div class="flex items-center gap-2">
+						<Label for="timeout-input" class="whitespace-nowrap text-sm">Timeout (s)</Label>
+						<Input
+							id="timeout-input"
+							type="number"
+							min="1"
+							max="300"
+							bind:value={timeoutSec}
+							class="w-24 text-right font-mono"
+						/>
+					</div>
+					<div class="flex items-center gap-2">
+						<Label for="session-name-input" class="whitespace-nowrap text-sm">Session</Label>
+						<Input
+							id="session-name-input"
+							type="text"
+							placeholder="Session name (optional)"
+							bind:value={sessionName}
+							class="w-48 font-mono"
+						/>
+						<label class="flex items-center gap-2 text-sm cursor-pointer">
+							<input type="checkbox" bind:checked={sessionNew} class="h-4 w-4" />
+							New session
+						</label>
+					</div>
+				</div>
+
 				<!-- Request Configuration Tabs -->
 				<Tabs value="headers" class="w-full">
-					<TabsList class="grid w-full grid-cols-2">
+					<TabsList class="grid w-full grid-cols-3">
 						<TabsTrigger value="headers">Headers</TabsTrigger>
+						<TabsTrigger value="variables">Variables</TabsTrigger>
 						<TabsTrigger value="body" disabled={selectedMethod === 'GET' || selectedMethod === 'HEAD'}>Body</TabsTrigger>
 					</TabsList>
 					
@@ -252,6 +398,46 @@
 							Add Header
 						</Button>
 					</TabsContent>
+
+					<!-- Variables Tab -->
+					<TabsContent value="variables" class="space-y-2">
+						<p class="text-xs text-slate-500 dark:text-slate-400">
+							{'Variables are referenced with {{NAME}} syntax in the URL, headers, and body.'}
+						</p>
+						<div class="space-y-2">
+							{#each variables as variable, i}
+								<div class="flex gap-2">
+									<Input
+										placeholder="Variable name"
+										bind:value={variable.key}
+										onchange={(e) => updateVariable(i, 'key', e.currentTarget.value)}
+										class="flex-1"
+									/>
+									<Input
+										placeholder="Variable value"
+										bind:value={variable.value}
+										onchange={(e) => updateVariable(i, 'value', e.currentTarget.value)}
+										class="flex-1"
+									/>
+									<Button
+										variant="outline"
+										size="icon"
+										onclick={() => removeVariable(i)}
+									>
+										<Trash2 class="h-4 w-4" />
+									</Button>
+								</div>
+							{/each}
+						</div>
+						<Button
+							variant="outline"
+							onclick={addVariable}
+							class="w-full"
+						>
+							<Plus class="mr-2 h-4 w-4" />
+							Add Variable
+						</Button>
+					</TabsContent>
 					
 					<!-- Body Tab -->
 					<TabsContent value="body">
@@ -264,6 +450,44 @@
 				</Tabs>
 			</CardContent>
 		</Card>
+
+		<!-- History Section -->
+		{#if history.length > 0}
+			<Card class="shadow-lg border-slate-200 dark:border-slate-800">
+				<CardHeader class="bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+					<div class="flex items-center justify-between">
+						<CardTitle class="flex items-center gap-2 text-lg">
+							<Clock class="h-4 w-4 text-blue-600" />
+							History
+						</CardTitle>
+						<Button variant="outline" size="sm" onclick={clearHistory} class="text-xs">
+							Clear
+						</Button>
+					</div>
+				</CardHeader>
+				<CardContent class="pt-4">
+					<ul class="divide-y divide-slate-200 dark:divide-slate-800">
+						{#each history as entry}
+							<li>
+								<button
+									class="w-full flex items-center gap-3 px-2 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded transition-colors"
+									onclick={() => restoreRequest(entry)}
+									title="Restore request"
+								>
+									<span class={`w-14 shrink-0 text-center text-xs font-bold py-0.5 rounded ${selectedMethod === entry.method ? 'ring-2 ring-blue-400' : ''}`}>
+										<span class={entry.method === 'GET' ? 'text-green-600' : entry.method === 'POST' ? 'text-blue-600' : entry.method === 'PUT' ? 'text-yellow-600' : entry.method === 'DELETE' ? 'text-red-600' : 'text-purple-600'}>
+											{entry.method}
+										</span>
+									</span>
+									<span class="flex-1 truncate font-mono text-sm text-slate-700 dark:text-slate-300">{entry.url}</span>
+									<span class="text-xs text-slate-400 shrink-0">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				</CardContent>
+			</Card>
+		{/if}
 
 		<!-- Response Section -->
 		<Card class="shadow-lg border-slate-200 dark:border-slate-800">
