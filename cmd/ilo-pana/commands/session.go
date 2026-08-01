@@ -42,6 +42,7 @@ func sessionHelp() {
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  -v, --verbose    Show full session details (unmask values)")
+	fmt.Println("  -f, --force      Skip confirmation prompt (session clear only)")
 }
 
 func sessionList(args []string) {
@@ -103,31 +104,41 @@ func sessionShow(args []string) {
 
 func sessionClear(args []string) {
 	fs := flag.NewFlagSet("session clear", flag.ExitOnError)
+	force := fs.Bool("force", false, "Skip confirmation prompt")
+	forceShort := fs.Bool("y", false, "Skip confirmation prompt (alias for --force)")
 	fs.Parse(args)
-	
+
 	if fs.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "Error: session name required\n")
-		fmt.Fprintf(os.Stderr, "Usage: ilo-pana session clear <name>\n")
+		fmt.Fprintf(os.Stderr, "Usage: ilo-pana session clear <name> [--force]\n")
 		os.Exit(1)
 	}
-	
+
 	name := fs.Arg(0)
-	
-	// Confirm deletion
-	fmt.Printf("Are you sure you want to clear session %q? (y/N): ", name)
-	var response string
-	fmt.Scanln(&response)
-	
-	if response != "y" && response != "Y" {
+
+	if !confirmClear(name, *force || *forceShort) {
 		fmt.Println("Cancelled")
 		return
 	}
-	
+
 	storage := session.NewFileStorage("")
 	if err := storage.Delete(name); err != nil {
 		fmt.Fprintf(os.Stderr, "Error clearing session: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Session %q cleared\n", name)
+}
+
+// confirmClear asks for confirmation before clearing a session unless forced.
+func confirmClear(name string, force bool) bool {
+	if force {
+		return true
+	}
+
+	fmt.Printf("Are you sure you want to clear session %q? (y/N): ", name)
+	var response string
+	fmt.Scanln(&response)
+
+	return response == "y" || response == "Y"
 }

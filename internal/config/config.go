@@ -26,6 +26,7 @@ type Config struct {
 	SessionName    string
 	SessionNew     bool
 	SessionHeaders bool
+	FailStatus     bool
 }
 
 // headerList implements flag.Value to accumulate multiple -H flag values
@@ -75,6 +76,7 @@ func Parse() (*Config, error) {
 		sessionName    = flag.String("session", "", "Session name to use for cookies and headers")
 		sessionNew     = flag.Bool("session-new", false, "Create new session (overwrites existing)")
 		sessionHeaders = flag.Bool("session-save-headers", false, "Save custom headers to session")
+		failStatus     = flag.Bool("fail", false, "Exit with a non-zero status code if the HTTP response is 4xx or 5xx (like curl --fail)")
 	)
 
 	flag.Var(&headers, "H", "HTTP headers (format: 'Key: Value'), can be specified multiple times")
@@ -100,6 +102,8 @@ func Parse() (*Config, error) {
 		fmt.Fprintf(os.Stderr, "  %s --session dev --session-new https://api.example.com/login\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Custom timeout\n")
 		fmt.Fprintf(os.Stderr, "  %s -timeout 10s https://slow-api.example.com/endpoint\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Fail on HTTP error status\n")
+		fmt.Fprintf(os.Stderr, "  %s --fail https://api.example.com/endpoint\n", os.Args[0])
 	}
 
 	flag.Parse()
@@ -171,6 +175,7 @@ func Parse() (*Config, error) {
 		SessionName:    *sessionName,
 		SessionNew:     *sessionNew,
 		SessionHeaders: *sessionHeaders,
+		FailStatus:     *failStatus,
 	}, nil
 }
 

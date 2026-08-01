@@ -210,6 +210,93 @@ func TestClientWithInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestExecuteFailStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		statusCode  int
+		failStatus  bool
+		wantError   bool
+		errorString string
+	}{
+		{
+			name:        "fail_flag_with_404",
+			statusCode:  http.StatusNotFound,
+			failStatus:  true,
+			wantError:   true,
+			errorString: "HTTP status 404",
+		},
+		{
+			name:        "fail_flag_with_500",
+			statusCode:  http.StatusInternalServerError,
+			failStatus:  true,
+			wantError:   true,
+			errorString: "HTTP status 500",
+		},
+		{
+			name:       "fail_flag_with_200",
+			statusCode: http.StatusOK,
+			failStatus: true,
+			wantError:  false,
+		},
+		{
+			name:       "no_fail_flag_with_404",
+			statusCode: http.StatusNotFound,
+			failStatus: false,
+			wantError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				w.Write([]byte(`{"error":"test"}`))
+			}))
+			defer server.Close()
+
+			cfg := &config.Config{
+				Method:     "GET",
+				URL:        server.URL,
+				Headers:    map[string]string{},
+				Timeout:    5 * time.Second,
+				FailStatus: tt.failStatus,
+			}
+
+			// Capture stdout and stderr
+			oldStdout := os.Stdout
+			oldStderr := os.Stderr
+			rOut, wOut, _ := os.Pipe()
+			rErr, wErr, _ := os.Pipe()
+			os.Stdout = wOut
+			os.Stderr = wErr
+
+			client, err := New(cfg)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			err = client.Execute()
+
+			// Restore stdout and stderr
+			wOut.Close()
+			wErr.Close()
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
+			io.ReadAll(rOut)
+			io.ReadAll(rErr)
+
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("Execute() error = nil, want error")
+				} else if !strings.Contains(err.Error(), tt.errorString) {
+					t.Errorf("Execute() error = %v, want error containing %q", err, tt.errorString)
+				}
+			} else if err != nil {
+				t.Errorf("Execute() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
 func BenchmarkClientExecute(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
