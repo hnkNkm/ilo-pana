@@ -39,6 +39,7 @@ Release: push a `v*` tag → GitHub Actions runs GoReleaser v2 (`.goreleaser.yml
 
 ## Conventions
 
+- **Commit in work units**: split commits by logical unit of work (one issue / one feature / one bugfix per commit, or per-file-group when that maps to a unit). Do not batch unrelated changes into one commit, and do not leave multiple units uncommitted together. One branch can contain multiple unit commits.
 - CLI `client.Execute()` prints formatted output to stdout; `client.ExecuteForGUI()` returns structured `*response.ResponseData` — GUI bindings must use the latter.
 - Variable expansion `{{VAR}}`: CLI auto-loads `./.env` if present; precedence is `-var` flags > env file > system env.
 - Sessions persist to `~/.ilo-pana/sessions/` (files are 0600); session tests/fixtures must not touch the real home dir — `NewFileStorage(dir)` accepts an override.
