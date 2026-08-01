@@ -65,5 +65,10 @@ debug
 # Claude artifacts
 .claude/
 
+# Playwright MCP artifacts
+.playwright-mcp/
+
 # docs
 #docs/
+docs/*.log
+docs/page-*.yml
