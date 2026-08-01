@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+
+	"ilo-pana/internal/collection"
 )
 
 func TestExecuteRequest(t *testing.T) {
@@ -91,6 +94,115 @@ func TestExecuteRequest(t *testing.T) {
 		}
 		if result.StatusCode != 200 {
 			t.Errorf("StatusCode = %d, want 200", result.StatusCode)
+		}
+	})
+}
+
+// newTestApp returns an App backed by a temp-dir collection storage.
+func newTestApp(t *testing.T) *App {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "collections")
+	return &App{collections: collection.NewFileStorage(dir)}
+}
+
+func TestCollectionsCRUD(t *testing.T) {
+	app := newTestApp(t)
+
+	req := collection.SavedRequest{
+		Name:    "get-pikachu",
+		Method:  "GET",
+		URL:     "https://pokeapi.co/api/v2/pokemon/pikachu",
+		Headers: map[string]string{"Accept": "application/json"},
+	}
+
+	t.Run("save_and_list", func(t *testing.T) {
+		if err := app.SaveRequest("pokemon", req); err != nil {
+			t.Fatalf("SaveRequest() error = %v", err)
+		}
+		names, err := app.ListCollections()
+		if err != nil {
+			t.Fatalf("ListCollections() error = %v", err)
+		}
+		if len(names) != 1 || names[0] != "pokemon" {
+			t.Errorf("ListCollections() = %v, want [pokemon]", names)
+		}
+	})
+
+	t.Run("load_and_upsert", func(t *testing.T) {
+		req2 := req
+		req2.Name = "get-raichu"
+		req2.URL = "https://pokeapi.co/api/v2/pokemon/raichu"
+		if err := app.SaveRequest("pokemon", req2); err != nil {
+			t.Fatalf("SaveRequest() error = %v", err)
+		}
+
+		// Upsert same name: should replace, not duplicate
+		req3 := req
+		req3.Method = "POST"
+		if err := app.SaveRequest("pokemon", req3); err != nil {
+			t.Fatalf("SaveRequest() upsert error = %v", err)
+		}
+
+		c, err := app.GetCollection("pokemon")
+		if err != nil {
+			t.Fatalf("GetCollection() error = %v", err)
+		}
+		if len(c.Requests) != 2 {
+			t.Errorf("expected 2 requests, got %d", len(c.Requests))
+		}
+		got, ok := c.Find("get-pikachu")
+		if !ok {
+			t.Fatal("expected to find get-pikachu")
+		}
+		if got.Method != "POST" {
+			t.Errorf("upserted method = %q, want POST", got.Method)
+		}
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		if err := app.SaveRequest("", req); err == nil {
+			t.Error("SaveRequest() with empty collection name should error")
+		}
+		bad := req
+		bad.Name = ""
+		if err := app.SaveRequest("pokemon", bad); err == nil {
+			t.Error("SaveRequest() with empty request name should error")
+		}
+	})
+
+	t.Run("delete_request", func(t *testing.T) {
+		if err := app.DeleteRequest("pokemon", "get-raichu"); err != nil {
+			t.Fatalf("DeleteRequest() error = %v", err)
+		}
+		c, _ := app.GetCollection("pokemon")
+		if _, ok := c.Find("get-raichu"); ok {
+			t.Error("get-raichu should be deleted")
+		}
+		if err := app.DeleteRequest("pokemon", "nope"); err == nil {
+			t.Error("DeleteRequest() of missing request should error")
+		}
+	})
+
+	t.Run("export_import", func(t *testing.T) {
+		exported, err := app.ExportCollection("pokemon")
+		if err != nil {
+			t.Fatalf("ExportCollection() error = %v", err)
+		}
+		if err := app.DeleteCollection("pokemon"); err != nil {
+			t.Fatalf("DeleteCollection() error = %v", err)
+		}
+		if err := app.ImportCollection(exported); err != nil {
+			t.Fatalf("ImportCollection() error = %v", err)
+		}
+		c, err := app.GetCollection("pokemon")
+		if err != nil {
+			t.Fatalf("GetCollection() after import error = %v", err)
+		}
+		if len(c.Requests) != 1 {
+			t.Errorf("expected 1 request after import, got %d", len(c.Requests))
+		}
+		if err := app.ImportCollection("{bad json"); err == nil {
+			t.Error("ImportCollection() of invalid JSON should error")
 		}
 	})
 }

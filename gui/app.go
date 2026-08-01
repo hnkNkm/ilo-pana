@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ilo-pana/internal/client"
+	"ilo-pana/internal/collection"
 	"ilo-pana/internal/config"
 	"ilo-pana/internal/request"
 	"ilo-pana/internal/response"
@@ -15,12 +16,15 @@ import (
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx        context.Context
+	collections collection.Storage
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		collections: collection.NewFileStorage(""),
+	}
 }
 
 // startup is called when the app starts. The context is saved
@@ -124,4 +128,82 @@ func (a *App) ExecuteRequestWithTimeout(method, url, body string, headers map[st
 		Headers:   headers,
 		TimeoutMs: timeoutMs,
 	})
+}
+
+// SaveRequest upserts a request into the named collection, creating it if needed.
+func (a *App) SaveRequest(collectionName string, req collection.SavedRequest) error {
+	if collectionName == "" {
+		return fmt.Errorf("collection name is required")
+	}
+	if req.Name == "" {
+		return fmt.Errorf("request name is required")
+	}
+
+	c, err := a.collections.Load(collectionName)
+	if err != nil {
+		if !collection.IsNotExist(err) {
+			return err
+		}
+		c = &collection.Collection{
+			Name:    collectionName,
+			Created: time.Now(),
+		}
+	}
+	now := time.Now()
+	if c.Created.IsZero() {
+		c.Created = now
+	}
+	req.Updated = now
+	c.Updated = now
+	c.Upsert(req)
+	return a.collections.Save(c)
+}
+
+// ListCollections returns the names of all saved collections.
+func (a *App) ListCollections() ([]string, error) {
+	return a.collections.List()
+}
+
+// GetCollection returns a collection by name.
+func (a *App) GetCollection(name string) (*collection.Collection, error) {
+	return a.collections.Load(name)
+}
+
+// DeleteRequest removes a request from a collection.
+func (a *App) DeleteRequest(collectionName, requestName string) error {
+	c, err := a.collections.Load(collectionName)
+	if err != nil {
+		return err
+	}
+	if !c.Remove(requestName) {
+		return fmt.Errorf("request %q not found in collection %q", requestName, collectionName)
+	}
+	c.Updated = time.Now()
+	return a.collections.Save(c)
+}
+
+// DeleteCollection removes a collection entirely.
+func (a *App) DeleteCollection(name string) error {
+	return a.collections.Delete(name)
+}
+
+// ExportCollection returns a collection as a JSON string (for copy/paste sharing).
+func (a *App) ExportCollection(name string) (string, error) {
+	c, err := a.collections.Load(name)
+	if err != nil {
+		return "", err
+	}
+	return c.MarshalJSON()
+}
+
+// ImportCollection parses a JSON collection and saves it, replacing any existing one.
+func (a *App) ImportCollection(json string) error {
+	c, err := collection.UnmarshalJSON(json)
+	if err != nil {
+		return err
+	}
+	if c.Name == "" {
+		return fmt.Errorf("collection JSON must include a name")
+	}
+	return a.collections.Save(c)
 }

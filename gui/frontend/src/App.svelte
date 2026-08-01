@@ -1,7 +1,8 @@
 <script lang="ts">
 	import './app.css';
 	import { onMount } from 'svelte';
-	import { ExecuteRequest } from '$wailsjs/go/main/App';
+	import { ExecuteRequest, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection } from '$wailsjs/go/main/App';
+	import { collection } from '$wailsjs/go/models';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -112,10 +113,145 @@
 
 	onMount(() => {
 		window.addEventListener('keydown', handleKeydown);
+		refreshCollections();
 		return () => window.removeEventListener('keydown', handleKeydown);
 	});
 
 	const historyUrls = $derived([...new Set(history.map(h => h.url))]);
+
+	// Collections (saved requests)
+	let collectionName = $state('');
+	let requestName = $state('');
+	let savedCollections = $state<collection.Collection[]>([]);
+	let collectionError = $state('');
+	let collectionMessage = $state('');
+
+	async function refreshCollections() {
+		try {
+			const names = await ListCollections();
+			const loaded = [];
+			for (const name of names) {
+				try {
+					loaded.push(await GetCollection(name));
+				} catch {
+					// skip unreadable collection
+				}
+			}
+			savedCollections = loaded;
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		}
+	}
+
+	async function saveCurrentRequest() {
+		collectionError = '';
+		collectionMessage = '';
+		if (!collectionName.trim()) {
+			collectionError = 'Enter a collection name to save this request.';
+			return;
+		}
+		if (!requestName.trim()) {
+			collectionError = 'Enter a request name to save this request.';
+			return;
+		}
+
+		const headersMap: Record<string, string> = {};
+		for (const h of headers) {
+			if (h.key?.trim()) headersMap[h.key.trim()] = h.value ?? '';
+		}
+		const variablesMap: Record<string, string> = {};
+		for (const v of variables) {
+			if (v.key?.trim()) variablesMap[v.key.trim()] = v.value ?? '';
+		}
+
+		try {
+			await SaveRequest(collectionName.trim(), new collection.SavedRequest({
+				name: requestName.trim(),
+				method: selectedMethod,
+				url,
+				headers: headersMap,
+				body: requestBody,
+				variables: variablesMap,
+			}));
+			collectionMessage = `Saved "${requestName.trim()}" to "${collectionName.trim()}".`;
+			await refreshCollections();
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		}
+	}
+
+	async function loadSavedRequest(c: collection.Collection, req: collection.SavedRequest) {
+		selectedMethod = req.method;
+		url = req.url;
+		parseQueryParams();
+		requestBody = req.body ?? '';
+		headers = req.headers && Object.keys(req.headers).length
+			? Object.entries(req.headers).map(([key, value]) => ({ key, value }))
+			: [{ key: 'Content-Type', value: 'application/json' }];
+		variables = req.variables
+			? Object.entries(req.variables).map(([key, value]) => ({ key, value }))
+			: [];
+		response = '';
+		responseStatus = 0;
+		responseHeaders = '';
+		error = '';
+		collectionError = '';
+		collectionMessage = '';
+	}
+
+	async function removeSavedRequest(c: collection.Collection, req: collection.SavedRequest) {
+		collectionError = '';
+		collectionMessage = '';
+		try {
+			await DeleteRequest(c.name, req.name);
+			if (c.requests.length === 1) {
+				await refreshCollections();
+			} else {
+				const fresh = await GetCollection(c.name);
+				const idx = savedCollections.findIndex(s => s.name === c.name);
+				if (idx >= 0) savedCollections[idx] = fresh;
+				savedCollections = savedCollections;
+			}
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		}
+	}
+
+	async function removeCollection(c: collection.Collection) {
+		collectionError = '';
+		collectionMessage = '';
+		try {
+			await DeleteCollection(c.name);
+			await refreshCollections();
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		}
+	}
+
+	async function exportCollection(c: collection.Collection) {
+		collectionError = '';
+		collectionMessage = '';
+		try {
+			const json = await ExportCollection(c.name);
+			await navigator.clipboard.writeText(json);
+			collectionMessage = `Exported "${c.name}" to clipboard.`;
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		}
+	}
+
+	async function importCollectionFromClipboard() {
+		collectionError = '';
+		collectionMessage = '';
+		try {
+			const json = await navigator.clipboard.readText();
+			await ImportCollection(json);
+			collectionMessage = 'Collection imported from clipboard.';
+			await refreshCollections();
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		}
+	}
 
 	// Methods
 	const httpMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
@@ -448,6 +584,52 @@
 					</div>
 				</div>
 
+				<!-- Save to collection row -->
+				<div class="flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 dark:border-slate-800 p-3 bg-slate-50/50 dark:bg-slate-900/50">
+					<div class="flex items-center gap-2">
+						<Label for="collection-name-input" class="whitespace-nowrap text-sm">Collection</Label>
+						<Input
+							id="collection-name-input"
+							type="text"
+							placeholder="Collection name"
+							bind:value={collectionName}
+							class="w-40 font-mono"
+						/>
+					</div>
+					<div class="flex items-center gap-2">
+						<Label for="request-name-input" class="whitespace-nowrap text-sm">Request name</Label>
+						<Input
+							id="request-name-input"
+							type="text"
+							placeholder="e.g. get-pikachu"
+							bind:value={requestName}
+							class="w-48 font-mono"
+						/>
+					</div>
+					<Button
+						variant="outline"
+						onclick={saveCurrentRequest}
+						class="text-sm"
+					>
+						Save Request
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						onclick={importCollectionFromClipboard}
+						class="text-xs"
+						title="Import a collection JSON from the clipboard"
+					>
+						Import from clipboard
+					</Button>
+					{#if collectionError}
+						<span class="text-xs text-red-600 dark:text-red-400">{collectionError}</span>
+					{/if}
+					{#if collectionMessage}
+						<span class="text-xs text-green-600 dark:text-green-400">{collectionMessage}</span>
+					{/if}
+				</div>
+
 				<!-- Request Configuration Tabs -->
 				<Tabs value="params" class="w-full">
 					<TabsList class="grid w-full grid-cols-5">
@@ -656,6 +838,65 @@
 							</li>
 						{/each}
 					</ul>
+				</CardContent>
+			</Card>
+		{/if}
+
+		<!-- Collections Section -->
+		{#if savedCollections.length > 0}
+			<Card class="shadow-lg border-slate-200 dark:border-slate-800">
+				<CardHeader class="bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+					<CardTitle class="flex items-center gap-2 text-lg">
+						<svg class="h-4 w-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+						</svg>
+						Collections
+					</CardTitle>
+				</CardHeader>
+				<CardContent class="pt-4 space-y-3">
+					{#each savedCollections as c}
+						<div class="rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden">
+							<div class="flex items-center justify-between px-3 py-2 bg-slate-100 dark:bg-slate-800/60">
+								<span class="text-sm font-semibold text-slate-700 dark:text-slate-200">{c.name}</span>
+								<div class="flex items-center gap-1">
+									<Button variant="ghost" size="sm" class="text-xs" onclick={() => exportCollection(c)} title="Copy collection JSON to clipboard">
+										Export
+									</Button>
+									<Button variant="ghost" size="sm" class="text-xs text-red-600 hover:text-red-700" onclick={() => removeCollection(c)} title="Delete collection">
+										Delete
+									</Button>
+								</div>
+							</div>
+							<ul class="divide-y divide-slate-100 dark:divide-slate-800">
+								{#each c.requests as req}
+									<li class="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+										<button
+											class="flex-1 flex items-center gap-2 text-left font-mono text-sm text-slate-700 dark:text-slate-300"
+											onclick={() => loadSavedRequest(c, req)}
+											title="Load request"
+										>
+											<span class="text-xs font-bold w-12 shrink-0 text-right">
+												<span class={req.method === 'GET' ? 'text-green-600' : req.method === 'POST' ? 'text-blue-600' : req.method === 'PUT' ? 'text-yellow-600' : req.method === 'DELETE' ? 'text-red-600' : 'text-purple-600'}>
+													{req.method}
+												</span>
+											</span>
+											<span class="text-slate-500 dark:text-slate-400 shrink-0">{req.name}</span>
+											<span class="truncate text-xs text-slate-400">{req.url}</span>
+										</button>
+										<Button
+											variant="ghost"
+											size="icon"
+											class="h-6 w-6"
+											onclick={() => removeSavedRequest(c, req)}
+											title="Delete request"
+										>
+											<Trash2 class="h-3.5 w-3.5" />
+										</Button>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/each}
 				</CardContent>
 			</Card>
 		{/if}
