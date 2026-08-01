@@ -3,8 +3,11 @@
 import {main} from '../models';
 import {response} from '../models';
 import {collection} from '../models';
+import {environment} from '../models';
 
 export function DeleteCollection(arg1:string):Promise<void>;
+
+export function DeleteEnvironment(arg1:string):Promise<void>;
 
 export function DeleteRequest(arg1:string,arg2:string):Promise<void>;
 
@@ -18,10 +21,16 @@ export function ExportCollection(arg1:string):Promise<string>;
 
 export function GetCollection(arg1:string):Promise<collection.Collection>;
 
+export function GetEnvironment(arg1:string):Promise<environment.Environment>;
+
 export function Greet(arg1:string):Promise<string>;
 
 export function ImportCollection(arg1:string):Promise<void>;
 
 export function ListCollections():Promise<Array<string>>;
+
+export function ListEnvironments():Promise<Array<string>>;
+
+export function SaveEnvironment(arg1:string,arg2:Record<string, string>):Promise<void>;
 
 export function SaveRequest(arg1:string,arg2:collection.SavedRequest):Promise<void>;

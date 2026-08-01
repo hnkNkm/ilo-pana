@@ -6,6 +6,10 @@ export function DeleteCollection(arg1) {
   return window['go']['main']['App']['DeleteCollection'](arg1);
 }
 
+export function DeleteEnvironment(arg1) {
+  return window['go']['main']['App']['DeleteEnvironment'](arg1);
+}
+
 export function DeleteRequest(arg1, arg2) {
   return window['go']['main']['App']['DeleteRequest'](arg1, arg2);
 }
@@ -30,6 +34,10 @@ export function GetCollection(arg1) {
   return window['go']['main']['App']['GetCollection'](arg1);
 }
 
+export function GetEnvironment(arg1) {
+  return window['go']['main']['App']['GetEnvironment'](arg1);
+}
+
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
@@ -40,6 +48,14 @@ export function ImportCollection(arg1) {
 
 export function ListCollections() {
   return window['go']['main']['App']['ListCollections']();
+}
+
+export function ListEnvironments() {
+  return window['go']['main']['App']['ListEnvironments']();
+}
+
+export function SaveEnvironment(arg1, arg2) {
+  return window['go']['main']['App']['SaveEnvironment'](arg1, arg2);
 }
 
 export function SaveRequest(arg1, arg2) {

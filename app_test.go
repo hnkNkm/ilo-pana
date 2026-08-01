@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"ilo-pana/internal/collection"
+	"ilo-pana/internal/environment"
 )
 
 func TestExecuteRequest(t *testing.T) {
@@ -22,7 +23,7 @@ func TestExecuteRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	app := &App{}
+	app := newTestApp(t)
 
 	t.Run("basic_get", func(t *testing.T) {
 		result, err := app.ExecuteRequest(RequestParams{
@@ -71,6 +72,69 @@ func TestExecuteRequest(t *testing.T) {
 		}
 	})
 
+	t.Run("environment_variable_expansion", func(t *testing.T) {
+		if err := app.SaveEnvironment("dev", map[string]string{
+			"BASE": server.URL,
+			"ID":   "7",
+		}); err != nil {
+			t.Fatalf("SaveEnvironment() error = %v", err)
+		}
+
+		result, err := app.ExecuteRequest(RequestParams{
+			Method:      "GET",
+			URL:         "{{BASE}}/env/{{ID}}",
+			TimeoutMs:   5000,
+			Environment: "dev",
+		})
+		if err != nil {
+			t.Fatalf("ExecuteRequest() error = %v", err)
+		}
+		var resp struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(result.Body), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		if resp.Path != "/env/7" {
+			t.Errorf("path = %q, want /env/7", resp.Path)
+		}
+	})
+
+	t.Run("request_variables_override_environment", func(t *testing.T) {
+		result, err := app.ExecuteRequest(RequestParams{
+			Method:      "GET",
+			URL:         "{{BASE}}/override",
+			Headers:     map[string]string{"X-Mode": "{{MODE}}"},
+			TimeoutMs:   5000,
+			Environment: "dev",
+			Variables:   map[string]string{"MODE": "request"},
+		})
+		if err != nil {
+			t.Fatalf("ExecuteRequest() error = %v", err)
+		}
+		var resp struct {
+			Headers map[string][]string `json:"headers"`
+		}
+		if err := json.Unmarshal([]byte(result.Body), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		if got := resp.Headers["X-Mode"][0]; got != "request" {
+			t.Errorf("X-Mode = %q, want %q (request variable should win)", got, "request")
+		}
+	})
+
+	t.Run("missing_environment_errors", func(t *testing.T) {
+		_, err := app.ExecuteRequest(RequestParams{
+			Method:      "GET",
+			URL:         server.URL,
+			TimeoutMs:   5000,
+			Environment: "does-not-exist",
+		})
+		if err == nil {
+			t.Error("ExecuteRequest() error = nil, want error for missing environment")
+		}
+	})
+
 	t.Run("invalid_url", func(t *testing.T) {
 		_, err := app.ExecuteRequest(RequestParams{
 			Method: "GET",
@@ -102,7 +166,75 @@ func TestExecuteRequest(t *testing.T) {
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "collections")
-	return &App{collections: collection.NewFileStorage(dir)}
+	envDir := filepath.Join(t.TempDir(), "environments")
+	return &App{
+		collections:  collection.NewFileStorage(dir),
+		environments: environment.NewFileStorage(envDir),
+	}
+}
+
+func TestEnvironmentsCRUD(t *testing.T) {
+	app := newTestApp(t)
+
+	t.Run("save_and_list", func(t *testing.T) {
+		if err := app.SaveEnvironment("dev", map[string]string{"BASE_URL": "http://localhost:8080"}); err != nil {
+			t.Fatalf("SaveEnvironment() error = %v", err)
+		}
+		if err := app.SaveEnvironment("prod", map[string]string{"BASE_URL": "https://api.example.com"}); err != nil {
+			t.Fatalf("SaveEnvironment() error = %v", err)
+		}
+		names, err := app.ListEnvironments()
+		if err != nil {
+			t.Fatalf("ListEnvironments() error = %v", err)
+		}
+		if len(names) != 2 {
+			t.Errorf("ListEnvironments() = %v, want 2", names)
+		}
+	})
+
+	t.Run("load_and_upsert_preserves_created", func(t *testing.T) {
+		first, err := app.GetEnvironment("dev")
+		if err != nil {
+			t.Fatalf("GetEnvironment() error = %v", err)
+		}
+		created := first.Created
+
+		if err := app.SaveEnvironment("dev", map[string]string{"BASE_URL": "http://localhost:9090"}); err != nil {
+			t.Fatalf("SaveEnvironment() upsert error = %v", err)
+		}
+		second, err := app.GetEnvironment("dev")
+		if err != nil {
+			t.Fatalf("GetEnvironment() error = %v", err)
+		}
+		if !second.Created.Equal(created) {
+			t.Errorf("Created changed on upsert: %v -> %v", created, second.Created)
+		}
+		if second.Variables["BASE_URL"] != "http://localhost:9090" {
+			t.Errorf("variables not updated: %v", second.Variables)
+		}
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		if err := app.SaveEnvironment("", map[string]string{}); err == nil {
+			t.Error("expected error for empty name")
+		}
+		if err := app.DeleteEnvironment("missing"); err == nil {
+			t.Error("expected error for missing environment")
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		if err := app.DeleteEnvironment("prod"); err != nil {
+			t.Fatalf("DeleteEnvironment() error = %v", err)
+		}
+		names, err := app.ListEnvironments()
+		if err != nil {
+			t.Fatalf("ListEnvironments() error = %v", err)
+		}
+		if len(names) != 1 || names[0] != "dev" {
+			t.Errorf("ListEnvironments() = %v, want [dev]", names)
+		}
+	})
 }
 
 func TestCollectionsCRUD(t *testing.T) {

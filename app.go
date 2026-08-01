@@ -9,6 +9,7 @@ import (
 	"ilo-pana/internal/client"
 	"ilo-pana/internal/collection"
 	"ilo-pana/internal/config"
+	"ilo-pana/internal/environment"
 	"ilo-pana/internal/request"
 	"ilo-pana/internal/response"
 	"ilo-pana/internal/variables"
@@ -16,14 +17,16 @@ import (
 
 // App struct
 type App struct {
-	ctx        context.Context
-	collections collection.Storage
+	ctx          context.Context
+	collections  collection.Storage
+	environments environment.Storage
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{
-		collections: collection.NewFileStorage(""),
+		collections:  collection.NewFileStorage(""),
+		environments: environment.NewFileStorage(""),
 	}
 }
 
@@ -48,19 +51,36 @@ type RequestParams struct {
 	SessionName string
 	SessionNew  bool
 	Variables   map[string]string
+	Environment string // Name of the selected environment, "" for none
 }
 
 // ExecuteRequest executes an HTTP request and returns structured response data for GUI
 func (a *App) ExecuteRequest(params RequestParams) (*response.ResponseData, error) {
 	method := strings.ToUpper(params.Method)
 
+	// Merge environment variables with request-level variables
+	// (request-level variables take precedence)
+	vars := make(map[string]string)
+	if params.Environment != "" {
+		env, err := a.environments.Load(params.Environment)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load environment %q: %w", params.Environment, err)
+		}
+		for k, v := range env.Variables {
+			vars[k] = v
+		}
+	}
+	for k, v := range params.Variables {
+		vars[k] = v
+	}
+
 	// Expand {{VAR}} variables in URL, headers, and body before validation
 	expandedURL := params.URL
 	expandedHeaders := params.Headers
 	expandedBody := params.Body
-	if len(params.Variables) > 0 {
+	if len(vars) > 0 {
 		expander := variables.New()
-		expander.SetAll(params.Variables)
+		expander.SetAll(vars)
 		expandedURL = expander.Expand(params.URL)
 		expandedHeaders = expander.ExpandHeaders(params.Headers)
 		expandedBody = expander.Expand(params.Body)
@@ -206,4 +226,47 @@ func (a *App) ImportCollection(json string) error {
 		return fmt.Errorf("collection JSON must include a name")
 	}
 	return a.collections.Save(c)
+}
+
+// SaveEnvironment upserts a named environment with the given variables.
+func (a *App) SaveEnvironment(name string, vars map[string]string) error {
+	if name == "" {
+		return fmt.Errorf("environment name is required")
+	}
+
+	e, err := a.environments.Load(name)
+	if err != nil {
+		if !environment.IsNotExist(err) {
+			return err
+		}
+		e = &environment.Environment{
+			Name:    name,
+			Created: time.Now(),
+		}
+	}
+	now := time.Now()
+	if e.Created.IsZero() {
+		e.Created = now
+	}
+	if vars == nil {
+		vars = make(map[string]string)
+	}
+	e.Variables = vars
+	e.Updated = now
+	return a.environments.Save(e)
+}
+
+// ListEnvironments returns the names of all saved environments.
+func (a *App) ListEnvironments() ([]string, error) {
+	return a.environments.List()
+}
+
+// GetEnvironment returns an environment by name.
+func (a *App) GetEnvironment(name string) (*environment.Environment, error) {
+	return a.environments.Load(name)
+}
+
+// DeleteEnvironment removes an environment entirely.
+func (a *App) DeleteEnvironment(name string) error {
+	return a.environments.Delete(name)
 }
