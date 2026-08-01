@@ -98,3 +98,40 @@ func (c *Client) Execute() error {
 
 	return nil
 }
+
+// ExecuteForGUI performs the HTTP request and returns structured response data for GUI
+func (c *Client) ExecuteForGUI() (*response.ResponseData, error) {
+	req, err := request.Build(c.config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+
+	if c.session != nil {
+		c.session.ApplyToRequest(req)
+		if c.config.SessionHeaders {
+			for key, value := range c.config.Headers {
+				c.session.SetHeader(key, value)
+			}
+		}
+	}
+
+	startTime := time.Now()
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	elapsed := time.Since(startTime)
+
+	if c.session != nil {
+		c.session.ProcessResponse(resp)
+		if err := c.session.Save(); err != nil {
+			// Log warning but don't fail the request
+			fmt.Printf("Warning: failed to save session: %v\n", err)
+		}
+	}
+
+	handler := response.New(c.config.Verbose)
+	return handler.ProcessToStruct(resp, elapsed)
+}

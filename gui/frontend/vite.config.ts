@@ -8,7 +8,8 @@ export default defineConfig({
   plugins: [tailwindcss(), svelte()],
   resolve: {
     alias: {
-      $lib: path.resolve('./src/lib')
+      $lib: path.resolve('./src/lib'),
+      $wailsjs: path.resolve('./wailsjs')
     }
   }
 });
