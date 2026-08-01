@@ -96,6 +96,11 @@ func (c *Client) Execute() error {
 		return fmt.Errorf("failed to process response: %w", err)
 	}
 
+	// Fail on HTTP error status codes when --fail is set
+	if c.config.FailStatus && resp.StatusCode >= 400 {
+		return fmt.Errorf("request failed with HTTP status %d", resp.StatusCode)
+	}
+
 	return nil
 }
 
