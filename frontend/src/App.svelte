@@ -1,8 +1,8 @@
 <script lang="ts">
 	import './app.css';
 	import { onMount } from 'svelte';
-	import { ExecuteRequest, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, ImportOpenAPI, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
-	import { collection, environment } from '$wailsjs/go/models';
+	import { ExecuteRequest, EvaluateAssertions, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, ImportOpenAPI, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
+	import { collection, environment, assertion } from '$wailsjs/go/models';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -38,6 +38,49 @@
 	let authUsername = $state('');
 	let authPassword = $state('');
 	let authToken = $state('');
+
+	// Assertions (response validation rules)
+	let assertionRules = $state<assertion.Rule[]>([]);
+	let assertionResults = $state<assertion.Result[]>([]);
+	let assertionError = $state('');
+
+	function addAssertionRule() {
+		assertionRules = [...assertionRules, new assertion.Rule({ kind: 'status_equals', target: '200' })];
+	}
+
+	function removeAssertionRule(index: number) {
+		assertionRules = assertionRules.filter((_, i) => i !== index);
+	}
+
+	function updateAssertionRule(index: number, field: 'name' | 'kind' | 'target' | 'expected', value: string) {
+		assertionRules[index][field] = value;
+		assertionRules = assertionRules;
+	}
+
+	function assertionKindLabel(kind: string): string {
+		const labels: Record<string, string> = {
+			status_equals: 'Status equals',
+			status_range: 'Status in range (2xx)',
+			body_contains: 'Body contains',
+			body_not_contains: 'Body not contains',
+			json_path_exists: 'JSON path exists',
+			json_path_equals: 'JSON path equals',
+			json_path_contains: 'JSON path contains',
+		};
+		return labels[kind] ?? kind;
+	}
+
+	let assertionPassedCount = $derived(assertionResults.filter(r => r.passed).length);
+
+	function ruleNeedsExpected(kind: string): boolean {
+		return kind === 'json_path_equals' || kind === 'json_path_contains';
+	}
+
+	function assertionTargetPlaceholder(kind: string): string {
+		if (kind === 'status_equals' || kind === 'status_range') return 'e.g. 200, 2xx, 200-299';
+		if (kind.startsWith('json_path')) return 'e.g. data.items[0].name';
+		return 'e.g. hello world';
+	}
 
 	// Environments (persisted variable sets, e.g. dev/staging/prod)
 	let environmentName = $state(''); // selected environment ('' = none)
@@ -512,6 +555,19 @@
 				.map(([k, v]) => `${k}: ${v}`)
 				.join('\n');
 
+			// Run configured assertions against the response
+			assertionError = '';
+			if (assertionRules.length) {
+				try {
+					assertionResults = await EvaluateAssertions(result, assertionRules);
+				} catch (e) {
+					assertionResults = [];
+					assertionError = extractErrorMessage(e);
+				}
+			} else {
+				assertionResults = [];
+			}
+
 			saveToHistory();
 		} catch (err) {
 			error = extractErrorMessage(err);
@@ -777,13 +833,14 @@
 
 				<!-- Request Configuration Tabs -->
 				<Tabs value="params" class="w-full">
-					<TabsList class="grid w-full grid-cols-5">
-						<TabsTrigger value="params">Params</TabsTrigger>
-						<TabsTrigger value="headers">Headers</TabsTrigger>
-						<TabsTrigger value="auth">Auth</TabsTrigger>
-						<TabsTrigger value="variables">Variables</TabsTrigger>
-						<TabsTrigger value="body" disabled={selectedMethod === 'GET' || selectedMethod === 'HEAD'}>Body</TabsTrigger>
-					</TabsList>
+				<TabsList class="grid w-full grid-cols-6">
+					<TabsTrigger value="params">Params</TabsTrigger>
+					<TabsTrigger value="headers">Headers</TabsTrigger>
+					<TabsTrigger value="auth">Auth</TabsTrigger>
+					<TabsTrigger value="variables">Variables</TabsTrigger>
+					<TabsTrigger value="assertions">Assertions</TabsTrigger>
+					<TabsTrigger value="body" disabled={selectedMethod === 'GET' || selectedMethod === 'HEAD'}>Body</TabsTrigger>
+				</TabsList>
 
 					<!-- Params Tab -->
 					<TabsContent value="params" class="space-y-2">
@@ -934,6 +991,71 @@
 						>
 							<Plus class="mr-2 h-4 w-4" />
 							Add Variable
+						</Button>
+					</TabsContent>
+
+					<!-- Assertions Tab -->
+					<TabsContent value="assertions" class="space-y-2">
+						<p class="text-xs text-slate-500 dark:text-slate-400">
+							Rules run against the response after each send. JSON paths use dot notation, e.g. data.items[0].name.
+						</p>
+						{#if assertionError}
+							<p class="text-xs text-red-600 dark:text-red-400">{assertionError}</p>
+						{/if}
+						<div class="space-y-2">
+							{#each assertionRules as rule, i}
+								<div class="flex flex-wrap gap-2 items-center">
+									<Select type="single" bind:value={rule.kind}>
+										<SelectTrigger class="w-44 text-sm">
+											<span>{assertionKindLabel(rule.kind)}</span>
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="status_equals">Status equals</SelectItem>
+											<SelectItem value="status_range">Status in range (2xx)</SelectItem>
+											<SelectItem value="body_contains">Body contains</SelectItem>
+											<SelectItem value="body_not_contains">Body not contains</SelectItem>
+											<SelectItem value="json_path_exists">JSON path exists</SelectItem>
+											<SelectItem value="json_path_equals">JSON path equals</SelectItem>
+											<SelectItem value="json_path_contains">JSON path contains</SelectItem>
+										</SelectContent>
+									</Select>
+									<Input
+										placeholder="Name (optional)"
+										value={rule.name}
+										oninput={(e) => updateAssertionRule(i, 'name', e.currentTarget.value)}
+										class="w-32 text-sm"
+									/>
+									<Input
+										placeholder={assertionTargetPlaceholder(rule.kind)}
+										value={rule.target}
+										oninput={(e) => updateAssertionRule(i, 'target', e.currentTarget.value)}
+										class="flex-1 min-w-40 text-sm font-mono"
+									/>
+									{#if ruleNeedsExpected(rule.kind)}
+										<Input
+											placeholder="Expected value"
+											value={rule.expected}
+											oninput={(e) => updateAssertionRule(i, 'expected', e.currentTarget.value)}
+											class="flex-1 min-w-40 text-sm font-mono"
+										/>
+									{/if}
+									<Button
+										variant="outline"
+										size="icon"
+										onclick={() => removeAssertionRule(i)}
+									>
+										<Trash2 class="h-4 w-4" />
+									</Button>
+								</div>
+							{/each}
+						</div>
+						<Button
+							variant="outline"
+							onclick={addAssertionRule}
+							class="w-full"
+						>
+							<Plus class="mr-2 h-4 w-4" />
+							Add Assertion
 						</Button>
 					</TabsContent>
 					
@@ -1153,6 +1275,15 @@
 							</Badge>
 							<Badge variant="outline">{responseTime}ms</Badge>
 							<Badge variant="outline">{formatBytes(response.length)}</Badge>
+							{#if assertionResults.length > 0}
+								<Badge
+									class={assertionPassedCount === assertionResults.length
+										? 'bg-emerald-600 text-white'
+										: 'bg-red-600 text-white'}
+								>
+									{assertionPassedCount}/{assertionResults.length} assertions
+								</Badge>
+							{/if}
 							<Button
 								variant="outline"
 								size="icon"
@@ -1178,9 +1309,10 @@
 					</Alert>
 				{:else if response}
 					<Tabs value="body" class="w-full">
-						<TabsList class="grid w-full grid-cols-2">
+						<TabsList class="grid w-full grid-cols-3">
 							<TabsTrigger value="body">Body</TabsTrigger>
 							<TabsTrigger value="headers">Headers</TabsTrigger>
+							<TabsTrigger value="assertions">Assertions</TabsTrigger>
 						</TabsList>
 						
 						<TabsContent value="body" class="mt-4">
@@ -1216,6 +1348,38 @@
 									<pre class="block w-full min-w-max p-6 text-left text-[14px] font-mono text-cyan-400 leading-[1.65] whitespace-pre">{responseHeaders}</pre>
 								</ScrollArea>
 							</div>
+						</TabsContent>
+
+						<TabsContent value="assertions" class="mt-4">
+							{#if assertionResults.length > 0}
+								<div class="rounded-lg border border-slate-700 bg-slate-900 shadow-xl overflow-hidden">
+									<div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+										<span class="text-xs text-slate-400 font-mono">assertions</span>
+										<span class="text-xs font-mono {assertionPassedCount === assertionResults.length ? 'text-emerald-400' : 'text-red-400'}">
+											{assertionPassedCount}/{assertionResults.length} passed
+										</span>
+									</div>
+									<ul class="p-3 space-y-2">
+										{#each assertionResults as r}
+											<li
+												class="flex items-start gap-2 rounded-md border px-3 py-2 text-sm font-mono
+													{r.passed
+														? 'border-emerald-700/60 bg-emerald-950/40 text-emerald-300'
+														: 'border-red-700/60 bg-red-950/40 text-red-300'}"
+											>
+												<span>{r.passed ? 'PASS' : 'FAIL'}</span>
+												<span class="flex-1">
+													{r.rule.name ? `${r.rule.name}: ` : ''}{r.message}
+												</span>
+											</li>
+										{/each}
+									</ul>
+								</div>
+							{:else}
+								<div class="flex h-[300px] items-center justify-center rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50">
+									<p class="text-sm text-slate-500">No assertions configured. Add rules in the Assertions request tab.</p>
+								</div>
+							{/if}
 						</TabsContent>
 					</Tabs>
 				{:else}

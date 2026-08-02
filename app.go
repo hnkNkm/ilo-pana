@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"ilo-pana/internal/assertion"
 	"ilo-pana/internal/client"
 	"ilo-pana/internal/collection"
 	"ilo-pana/internal/config"
@@ -318,4 +319,10 @@ func (a *App) ImportOpenAPI(content, collectionName string) (int, error) {
 		return 0, err
 	}
 	return len(doc.Endpoints), nil
+}
+
+// EvaluateAssertions runs assertion rules against a response and returns
+// the pass/fail results in rule order.
+func (a *App) EvaluateAssertions(data *response.ResponseData, rules []assertion.Rule) []assertion.Result {
+	return assertion.Evaluate(data, rules)
 }

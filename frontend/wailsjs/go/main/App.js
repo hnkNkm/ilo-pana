@@ -14,6 +14,10 @@ export function DeleteRequest(arg1, arg2) {
   return window['go']['main']['App']['DeleteRequest'](arg1, arg2);
 }
 
+export function EvaluateAssertions(arg1, arg2) {
+  return window['go']['main']['App']['EvaluateAssertions'](arg1, arg2);
+}
+
 export function ExecuteRequest(arg1) {
   return window['go']['main']['App']['ExecuteRequest'](arg1);
 }
