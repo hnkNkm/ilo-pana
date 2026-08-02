@@ -1,9 +1,7 @@
 package config
 
 import (
-	"flag"
 	"io"
-	"os"
 	"strings"
 	"testing"
 )
@@ -133,17 +131,7 @@ func TestParseHeaders(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Capture stderr to suppress warnings during test
-			oldStderr := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
-
-			got, err := parseHeaders(tt.headers)
-
-			// Restore stderr
-			w.Close()
-			os.Stderr = oldStderr
-			io.ReadAll(r)
+			got, err := parseHeaders(tt.headers, io.Discard)
 
 			if tt.wantError {
 				if err == nil {
@@ -173,15 +161,7 @@ func TestParseHeaders(t *testing.T) {
 	}
 }
 
-func TestParseIntegration(t *testing.T) {
-	// Save original args and flags
-	origArgs := os.Args
-	origCommandLine := flag.CommandLine
-	defer func() {
-		os.Args = origArgs
-		flag.CommandLine = origCommandLine
-	}()
-
+func TestParseWith(t *testing.T) {
 	tests := []struct {
 		name      string
 		args      []string
@@ -189,39 +169,60 @@ func TestParseIntegration(t *testing.T) {
 	}{
 		{
 			name:      "valid_simple_request",
-			args:      []string{"cmd", "https://api.example.com"},
+			args:      []string{"https://api.example.com"},
 			wantError: false,
 		},
 		{
 			name:      "missing_url",
-			args:      []string{"cmd"},
+			args:      []string{},
 			wantError: true,
 		},
 		{
 			name:      "with_method_and_headers",
-			args:      []string{"cmd", "-X", "POST", "-H", "Content-Type: application/json", "https://api.example.com"},
+			args:      []string{"-X", "POST", "-H", "Content-Type: application/json", "https://api.example.com"},
 			wantError: false,
+		},
+		{
+			name:      "unknown_flag",
+			args:      []string{"-bogus", "https://api.example.com"},
+			wantError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Reset flag.CommandLine
-			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-			flag.CommandLine.SetOutput(io.Discard)
-
-			os.Args = tt.args
-			_, err := Parse()
+			_, err := ParseWith(tt.args, io.Discard)
 
 			if tt.wantError {
 				if err == nil {
-					t.Errorf("Parse() error = nil, want error")
+					t.Errorf("ParseWith() error = nil, want error")
 				}
 			} else {
 				if err != nil {
-					t.Errorf("Parse() error = %v, want nil", err)
+					t.Errorf("ParseWith() error = %v, want nil", err)
 				}
 			}
 		})
+	}
+}
+
+func TestParseWithReentrant(t *testing.T) {
+	cfg, err := ParseWith([]string{"-X", "POST", "-H", "A: 1", "https://example.com/first"}, io.Discard)
+	if err != nil {
+		t.Fatalf("first ParseWith() error = %v", err)
+	}
+	if cfg.Method != "POST" || len(cfg.Headers) != 1 {
+		t.Errorf("first parse = %+v, want POST with 1 header", cfg)
+	}
+
+	cfg2, err := ParseWith([]string{"https://example.com/second"}, io.Discard)
+	if err != nil {
+		t.Fatalf("second ParseWith() error = %v", err)
+	}
+	if cfg2.Method != "GET" {
+		t.Errorf("second parse method = %q, want GET (state from first call leaked)", cfg2.Method)
+	}
+	if len(cfg2.Headers) != 0 {
+		t.Errorf("second parse headers = %v, want empty (state from first call leaked)", cfg2.Headers)
 	}
 }

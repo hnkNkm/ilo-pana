@@ -49,7 +49,7 @@ type RequestParams struct {
 	Method      string
 	URL         string
 	Body        string
-	BodyFormat  string // "", "raw", "multipart", "urlencoded"
+	BodyFormat  config.BodyFormat // "", "raw", "multipart", "urlencoded"
 	FormFields  []config.FormField
 	Headers     map[string]string
 	TimeoutMs   int // Timeout in milliseconds, default 30000 (30 seconds)

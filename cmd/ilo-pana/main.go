@@ -4,7 +4,7 @@
 package main
 
 import (
-	"flag"
+	"errors"
 	"fmt"
 	"os"
 
@@ -27,10 +27,15 @@ func main() {
 	}
 	
 	// Parse command-line flags and configuration
-	cfg, err := config.Parse()
+	cfg, err := config.ParseWith(os.Args[1:], os.Stderr)
 	if err != nil {
+		// Flag errors were already reported by the flag package together
+		// with the usage text; only add our own message for other errors.
+		if errors.Is(err, config.ErrUsage) {
+			os.Exit(2)
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
-		flag.Usage()
+		config.Usage(os.Stderr)
 		os.Exit(1)
 	}
 
