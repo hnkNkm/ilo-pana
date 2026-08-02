@@ -15,6 +15,7 @@
 	import { Separator } from '$lib/components/ui/separator';
 	import { Alert, AlertDescription } from '$lib/components/ui/alert';
 	import { Plus, Trash2, Send, Copy, Download, Clock } from '@lucide/svelte/icons';
+	import JsonTree from '$lib/components/JsonTree.svelte';
 
 	// State variables
 	let url = $state('https://pokeapi.co/api/v2/pokemon/pikachu');
@@ -641,6 +642,17 @@
 			return json;
 		}
 	}
+
+	// Response body view mode: raw / pretty / tree
+	let responseViewMode = $state<'raw' | 'pretty' | 'tree'>('pretty');
+	const parsedResponse = $derived.by(() => {
+		try {
+			return JSON.parse(response);
+		} catch {
+			return null;
+		}
+	});
+	const responseIsJson = $derived(parsedResponse !== null);
 </script>
 
 <main class="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 p-4">
@@ -1322,15 +1334,46 @@
 										<div class="w-3 h-3 rounded-full bg-red-500"></div>
 										<div class="w-3 h-3 rounded-full bg-yellow-500"></div>
 										<div class="w-3 h-3 rounded-full bg-green-500"></div>
+										<span class="text-xs text-slate-400 font-mono">response.json</span>
 									</div>
-									<span class="text-xs text-slate-400 font-mono">response.json</span>
-									<button onclick={copyResponse} class="text-slate-400 hover:text-white transition-colors p-1" title="Copy to clipboard">
-										<Copy class="h-4 w-4" />
-									</button>
+									<div class="flex items-center gap-2">
+										{#if responseIsJson}
+											<div class="flex rounded-md bg-slate-900 border border-slate-700 p-0.5 text-[11px] font-mono">
+												<button
+													class="rounded px-2 py-0.5 {responseViewMode === 'raw' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}"
+													onclick={() => (responseViewMode = 'raw')}
+													title="Raw response text"
+												>Raw</button>
+												<button
+													class="rounded px-2 py-0.5 {responseViewMode === 'pretty' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}"
+													onclick={() => (responseViewMode = 'pretty')}
+													title="Pretty-printed JSON"
+												>Pretty</button>
+												<button
+													class="rounded px-2 py-0.5 {responseViewMode === 'tree' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}"
+													onclick={() => (responseViewMode = 'tree')}
+													title="Collapsible JSON tree with search"
+												>Tree</button>
+											</div>
+										{/if}
+										<button onclick={copyResponse} class="text-slate-400 hover:text-white transition-colors p-1" title="Copy to clipboard">
+											<Copy class="h-4 w-4" />
+										</button>
+									</div>
 								</div>
-								<ScrollArea class="h-[600px] w-full bg-gray-900" orientation="both">
-									<pre class="block w-full min-w-max p-4 text-left text-[12px] font-mono leading-[1.4] text-gray-200 whitespace-pre">{@html formatJson(response)}</pre>
-								</ScrollArea>
+								{#if responseIsJson && responseViewMode === 'tree'}
+									<div class="h-[600px] w-full bg-gray-900">
+										<JsonTree value={parsedResponse} />
+									</div>
+								{:else if responseIsJson && responseViewMode === 'raw'}
+									<ScrollArea class="h-[600px] w-full bg-gray-900" orientation="both">
+										<pre class="block w-full min-w-max p-4 text-left text-[12px] font-mono leading-[1.4] text-gray-200 whitespace-pre">{response}</pre>
+									</ScrollArea>
+								{:else}
+									<ScrollArea class="h-[600px] w-full bg-gray-900" orientation="both">
+										<pre class="block w-full min-w-max p-4 text-left text-[12px] font-mono leading-[1.4] text-gray-200 whitespace-pre">{@html formatJson(response)}</pre>
+									</ScrollArea>
+								{/if}
 							</div>
 						</TabsContent>
 						
