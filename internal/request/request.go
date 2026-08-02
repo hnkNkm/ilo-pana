@@ -42,10 +42,17 @@ func Build(cfg *config.Config) (*http.Request, error) {
 
 	var body io.Reader
 	var bodyFormat string
+	var err error
+	if !cfg.BodyFormat.Valid() {
+		return nil, fmt.Errorf("unknown body format %q", cfg.BodyFormat)
+	}
 	switch cfg.BodyFormat {
-	case "multipart":
-		body, bodyFormat = buildMultipartBody(cfg)
-	case "urlencoded":
+	case config.BodyFormatMultipart:
+		body, bodyFormat, err = buildMultipartBody(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build multipart body: %w", err)
+		}
+	case config.BodyFormatURLEncoded:
 		body, bodyFormat = buildURLEncodedBody(cfg)
 	default:
 		if cfg.Data != "" {
@@ -127,7 +134,7 @@ func IsJSON(s string) bool {
 
 // buildMultipartBody encodes form fields as multipart/form-data and returns
 // the body along with the Content-Type header value (including boundary).
-func buildMultipartBody(cfg *config.Config) (io.Reader, string) {
+func buildMultipartBody(cfg *config.Config) (io.Reader, string, error) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
@@ -147,15 +154,21 @@ func buildMultipartBody(cfg *config.Config) (io.Reader, string) {
 			h.Set("Content-Type", contentType)
 			part, err := writer.CreatePart(h)
 			if err != nil {
-				continue
+				return nil, "", fmt.Errorf("create part %q: %w", f.Key, err)
 			}
-			part.Write(f.FileContent)
+			if _, err := part.Write(f.FileContent); err != nil {
+				return nil, "", fmt.Errorf("write file content for %q: %w", f.Key, err)
+			}
 		} else {
-			writer.WriteField(f.Key, f.Value)
+			if err := writer.WriteField(f.Key, f.Value); err != nil {
+				return nil, "", fmt.Errorf("write field %q: %w", f.Key, err)
+			}
 		}
 	}
-	writer.Close()
-	return &buf, writer.FormDataContentType()
+	if err := writer.Close(); err != nil {
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
+	}
+	return &buf, writer.FormDataContentType(), nil
 }
 
 // buildURLEncodedBody encodes form fields as application/x-www-form-urlencoded.
@@ -170,9 +183,12 @@ func buildURLEncodedBody(cfg *config.Config) (io.Reader, string) {
 }
 
 // escapeQuotes escapes quotes and newlines in multipart header values.
+// Lone \r or \n must also be stripped: they are not part of \r\n but still
+// allow injecting into the Content-Disposition MIME header.
 func escapeQuotes(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
-	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
 	return s
 }
