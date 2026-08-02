@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -70,7 +73,10 @@ func Parse(data []byte) (*Document, error) {
 
 func parsePaths(paths map[string]any, base string, refs map[string]any, isV2 bool, usedNames map[string]int) []Endpoint {
 	var endpoints []Endpoint
-	for path, item := range paths {
+	// Iterate in sorted key order so duplicate operation names get stable
+	// "(2)"/"(3)" suffixes regardless of map iteration order.
+	for _, path := range slices.Sorted(maps.Keys(paths)) {
+		item := paths[path]
 		pathItem, ok := item.(map[string]any)
 		if !ok {
 			continue
@@ -100,7 +106,9 @@ func parseOperation(path, method string, op map[string]any, base string, refs ma
 		basePath = strings.TrimSuffix(base, "/") + "/" + strings.TrimPrefix(path, "/")
 	}
 	ep.URL = pathVarPattern.ReplaceAllString(basePath, "{{$1}}")
-	for _, match := range pathVarPattern.FindAllStringSubmatch(path, -1) {
+	// Register variables from the whole basePath: server URL templates such as
+	// https://{region}.api.example.com must appear in the Variables tab too.
+	for _, match := range pathVarPattern.FindAllStringSubmatch(basePath, -1) {
 		ep.Variables[match[1]] = ""
 	}
 
@@ -122,11 +130,11 @@ func parseOperation(path, method string, op map[string]any, base string, refs ma
 	}
 
 	// Query params are appended to the URL so the GUI's Params tab
-	// picks them up when the request is loaded.
+	// picks them up when the request is loaded. Sorted for determinism.
 	if len(ep.QueryParams) > 0 {
 		sep := "?"
-		for k, v := range ep.QueryParams {
-			ep.URL += sep + k + "=" + escapeQueryValue(v)
+		for _, k := range slices.Sorted(maps.Keys(ep.QueryParams)) {
+			ep.URL += sep + k + "=" + escapeQueryValue(ep.QueryParams[k])
 			sep = "&"
 		}
 	}
@@ -164,16 +172,15 @@ func uniqueName(base string, used map[string]int) string {
 
 func serverBaseURL(raw map[string]any, isV2 bool) string {
 	if isV2 {
-		var host, basePath string
-		if servers, ok := raw["schemes"].([]any); ok && len(servers) > 0 {
-			scheme := str(servers[0])
-			host = str(raw["host"])
-			if host != "" {
-				return scheme + "://" + host + str(raw["basePath"])
-			}
-			_ = basePath
+		host := str(raw["host"])
+		if host == "" {
+			return str(raw["basePath"])
 		}
-		return str(raw["basePath"])
+		scheme := "http"
+		if servers, ok := raw["schemes"].([]any); ok && len(servers) > 0 {
+			scheme = str(servers[0])
+		}
+		return scheme + "://" + host + str(raw["basePath"])
 	}
 	if servers, ok := raw["servers"].([]any); ok && len(servers) > 0 {
 		if first, ok := servers[0].(map[string]any); ok {
@@ -184,17 +191,30 @@ func serverBaseURL(raw map[string]any, isV2 bool) string {
 }
 
 func refsOf(raw map[string]any, isV2 bool) map[string]any {
-	key := "components"
+	containerKey := "components"
 	if isV2 {
-		key = "definitions"
+		containerKey = "definitions"
 	}
-	if comp, ok := raw[key].(map[string]any); ok {
-		if schemas, ok := comp["schemas"].(map[string]any); ok {
-			return schemas
+	container, ok := raw[containerKey].(map[string]any)
+	if !ok {
+		return nil
+	}
+	// Index every nested map under its full path (e.g.
+	// "components/schemas/Pet") so refs to different sections cannot collide,
+	// while keeping flat names resolvable via the last-segment fallback.
+	out := make(map[string]any)
+	var index func(prefix string, node map[string]any)
+	index = func(prefix string, node map[string]any) {
+		for name, value := range node {
+			if sub, ok := value.(map[string]any); ok {
+				key := prefix + "/" + name
+				out[key] = sub
+				index(key, sub)
+			}
 		}
-		return comp
 	}
-	return nil
+	index(containerKey, container)
+	return out
 }
 
 func requestBodySchema(op map[string]any, isV2 bool) map[string]any {
@@ -231,8 +251,8 @@ func pickMedia(content map[string]any) map[string]any {
 	if m, ok := content["application/json"].(map[string]any); ok {
 		return m
 	}
-	for _, m := range content {
-		if mm, ok := m.(map[string]any); ok {
+	for _, key := range slices.Sorted(maps.Keys(content)) {
+		if mm, ok := content[key].(map[string]any); ok {
 			return mm
 		}
 	}
@@ -277,17 +297,11 @@ func paramValue(p map[string]any) string {
 	return ""
 }
 
-// escapeQueryValue escapes characters that would break URL parsing,
-// using the same decoding (decodeURIComponent) the GUI applies.
+// escapeQueryValue percent-encodes a query value so it survives the GUI's
+// decodeURIComponent round-trip. url.QueryEscape encodes space as '+', which
+// decodeURIComponent does not decode, so '%20' is restored manually.
 func escapeQueryValue(v string) string {
-	replacer := strings.NewReplacer(
-		"&", "%26",
-		"=", "%3D",
-		" ", "%20",
-		"+", "%2B",
-		"#", "%23",
-	)
-	return replacer.Replace(v)
+	return strings.ReplaceAll(url.QueryEscape(v), "+", "%20")
 }
 
 func scalarString(v any) string {

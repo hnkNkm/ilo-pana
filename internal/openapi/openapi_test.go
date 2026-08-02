@@ -232,6 +232,35 @@ func TestExampleFromSchema(t *testing.T) {
 	}
 }
 
+func TestExampleFromSchemaAllOfMergesAllMembers(t *testing.T) {
+	refs := map[string]any{
+		"Base": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"id": map[string]any{"type": "integer"}},
+		},
+	}
+	schema := map[string]any{
+		"allOf": []any{
+			map[string]any{"$ref": "#/components/schemas/Base"},
+			map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"name": map[string]any{"type": "string"}},
+			},
+			map[string]any{
+				"allOf": []any{
+					map[string]any{"properties": map[string]any{"nested": map[string]any{"type": "boolean"}}},
+				},
+			},
+		},
+	}
+	v := exampleFromSchema(schema, refs, 0).(map[string]any)
+	for _, want := range []string{"id", "name", "nested"} {
+		if _, ok := v[want]; !ok {
+			t.Errorf("allOf merge missing property %q, got %#v", want, v)
+		}
+	}
+}
+
 func TestUniqueNames(t *testing.T) {
 	used := map[string]int{}
 	if n := uniqueName("dup", used); n != "dup" {
@@ -265,5 +294,65 @@ paths:
 	}
 	if !strings.Contains(doc.Endpoints[0].URL, "apiKey=secret") {
 		t.Errorf("path-level param not applied: %q", doc.Endpoints[0].URL)
+	}
+}
+
+func TestParseIsDeterministic(t *testing.T) {
+	spec := `
+openapi: 3.0.0
+info: {title: T}
+paths:
+  /z:
+    get: {operationId: op}
+    post: {operationId: op}
+  /a:
+    get: {operationId: op}
+  /m:
+    get:
+      operationId: list
+      parameters:
+        - {name: b, in: query, example: "50%"}
+        - {name: a, in: query, example: "x+y #"}
+        - {name: c, in: query, example: "hello world"}
+`
+	first, err := Parse([]byte(spec))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	second, err := Parse([]byte(spec))
+	if err != nil {
+		t.Fatalf("second Parse failed: %v", err)
+	}
+
+	if len(first.Endpoints) != 4 {
+		t.Fatalf("got %d endpoints, want 4", len(first.Endpoints))
+	}
+	// Paths and operations must come out in stable order: sorted path keys,
+	// then methods in methodKeys order (get before post).
+	gotNames := []string{}
+	for _, ep := range first.Endpoints {
+		gotNames = append(gotNames, ep.Name)
+	}
+	wantNames := []string{"op", "list", "op (2)", "op (3)"}
+	for i, want := range wantNames {
+		if gotNames[i] != want {
+			t.Errorf("endpoint %d name = %q, want %q (order must be stable)", i, gotNames[i], want)
+		}
+	}
+
+	for i := range first.Endpoints {
+		a, b := first.Endpoints[i], second.Endpoints[i]
+		if a.URL != b.URL || a.Name != b.Name || a.Body != b.Body {
+			t.Errorf("run mismatch at %d: %+v vs %+v", i, a, b)
+		}
+	}
+
+	// Reserved characters must be encoded so decodeURIComponent survives.
+	url := first.Endpoints[1].URL
+	if !strings.Contains(url, "a=x%2By%20%23") {
+		t.Errorf("URL = %q, want %% -encoded '+'/space/'#'", url)
+	}
+	if !strings.Contains(url, "b=50%25") {
+		t.Errorf("URL = %q, want %% -encoded '%%'", url)
 	}
 }

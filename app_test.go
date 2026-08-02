@@ -442,16 +442,23 @@ components:
 		if len(c.Requests) != 2 {
 			t.Fatalf("requests = %d, want 2", len(c.Requests))
 		}
-		get := c.Requests[0]
-		if get.Method != "GET" || get.URL != "https://api.example.com/v1/pets/{{petId}}" {
+		var get, post *collection.SavedRequest
+		for i := range c.Requests {
+			switch c.Requests[i].Method {
+			case "GET":
+				get = &c.Requests[i]
+			case "POST":
+				post = &c.Requests[i]
+			}
+		}
+		if get == nil || get.URL != "https://api.example.com/v1/pets/{{petId}}" {
 			t.Errorf("unexpected imported GET request: %+v", get)
 		}
 		if get.Variables["petId"] != "" {
 			t.Errorf("petId variable not registered: %+v", get.Variables)
 		}
-		post := c.Requests[1]
-		if !strings.Contains(post.Body, `"name": "rex"`) {
-			t.Errorf("POST body should include generated example: %s", post.Body)
+		if post == nil || !strings.Contains(post.Body, `"name": "rex"`) {
+			t.Errorf("POST body should include generated example: %s", post)
 		}
 	})
 

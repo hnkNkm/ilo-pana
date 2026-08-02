@@ -34,16 +34,8 @@ func exampleFromSchema(schema map[string]any, refs map[string]any, depth int) an
 	}
 
 	if allOf, ok := schema["allOf"].([]any); ok && len(allOf) > 0 {
-		merged := map[string]any{}
-		for _, sub := range allOf {
-			if m, ok := sub.(map[string]any); ok {
-				if props, ok := m["properties"].(map[string]any); ok {
-					merged["properties"] = props
-				}
-			}
-		}
-		if len(merged) > 0 {
-			return exampleFromSchema(merged, refs, depth)
+		if props := mergeAllOfProperties(allOf, refs, depth); len(props) > 0 {
+			return exampleFromSchema(map[string]any{"properties": props}, refs, depth)
 		}
 	}
 	for _, key := range []string{"oneOf", "anyOf"} {
@@ -104,8 +96,46 @@ func exampleFromSchema(schema map[string]any, refs map[string]any, depth int) an
 	}
 }
 
+// mergeAllOfProperties merges the properties of every allOf member, resolving
+// $refs and nested allOf recursively, so the generated example contains the
+// fields of all members instead of only the last one.
+func mergeAllOfProperties(allOf []any, refs map[string]any, depth int) map[string]any {
+	props := map[string]any{}
+	for _, sub := range allOf {
+		m, ok := sub.(map[string]any)
+		if !ok {
+			continue
+		}
+		if ref := str(m["$ref"]); ref != "" {
+			if depth >= maxRefDepth {
+				continue
+			}
+			if resolved, ok := resolveRef(ref, refs); ok {
+				m = resolved
+			}
+		}
+		if nested, ok := m["allOf"].([]any); ok && len(nested) > 0 {
+			for name, propSchema := range mergeAllOfProperties(nested, refs, depth+1) {
+				props[name] = propSchema
+			}
+		}
+		if mProps, ok := m["properties"].(map[string]any); ok {
+			for name, propSchema := range mProps {
+				props[name] = propSchema
+			}
+		}
+	}
+	return props
+}
+
 // resolveRef resolves a $ref like "#/components/schemas/Pet" against refs.
+// Keys are indexed under their full path (e.g. "components/schemas/Pet") so
+// parameters and schemas sharing a name cannot collide; the last path segment
+// is used as a fallback for backwards compatibility.
 func resolveRef(ref string, refs map[string]any) (map[string]any, bool) {
+	if full, ok := refs[strings.TrimPrefix(ref, "#/")].(map[string]any); ok {
+		return full, true
+	}
 	name := ref
 	if i := strings.LastIndex(ref, "/"); i >= 0 {
 		name = ref[i+1:]
