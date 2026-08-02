@@ -318,6 +318,7 @@ export namespace response {
 	    headers: Record<string, string>;
 	    body: string;
 	    elapsedMs: number;
+	    warning?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ResponseData(source);
@@ -330,6 +331,7 @@ export namespace response {
 	        this.headers = source["headers"];
 	        this.body = source["body"];
 	        this.elapsedMs = source["elapsedMs"];
+	        this.warning = source["warning"];
 	    }
 	}
 

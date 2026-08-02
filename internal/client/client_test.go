@@ -297,6 +297,48 @@ func TestExecuteFailStatus(t *testing.T) {
 	}
 }
 
+func TestClientExecuteForGUI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Authorization", "Bearer secret-token")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"id":1}`)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Method:  "POST",
+		URL:     server.URL,
+		Data:    `{"name":"x"}`,
+		Headers: map[string]string{},
+		Timeout: 5 * time.Second,
+	}
+
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	data, err := client.ExecuteForGUI()
+	if err != nil {
+		t.Fatalf("ExecuteForGUI() error = %v", err)
+	}
+	if data.StatusCode != http.StatusCreated {
+		t.Errorf("StatusCode = %d, want %d", data.StatusCode, http.StatusCreated)
+	}
+	if data.Body != "{\n  \"id\": 1\n}" {
+		t.Errorf("Body = %q, want pretty-printed JSON", data.Body)
+	}
+	if got := data.Headers["Authorization"]; !strings.Contains(got, "MASKED") {
+		t.Errorf("Authorization header should be masked, got %q", got)
+	}
+	if data.ElapsedMs < 0 {
+		t.Errorf("ElapsedMs = %d, want >= 0", data.ElapsedMs)
+	}
+}
+
 func BenchmarkClientExecute(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
