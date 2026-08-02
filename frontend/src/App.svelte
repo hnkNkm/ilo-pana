@@ -185,8 +185,9 @@
 		const entry: HistoryEntry = {
 			method: selectedMethod,
 			url,
-			// Clone so later editor edits cannot mutate the stored history entry.
-			headers: structuredClone(headers.filter(h => h.key?.trim())),
+			// Build plain objects: $state rows are reactive proxies and cannot
+			// be structured-cloned, so copy the fields manually.
+			headers: headers.filter(h => h.key?.trim()).map(h => ({ key: h.key, value: h.value })),
 			body: requestBody,
 			timestamp: Date.now(),
 		};
@@ -207,8 +208,13 @@
 		requestBody = entry.body;
 		bodyFormat = 'raw';
 		formFields = [];
-		// Clone so editing the restored rows cannot corrupt the history entry.
-		headers = ensureRowIds(structuredClone(entry.headers.length ? entry.headers : [{ key: 'Content-Type', value: 'application/json' }]));
+		// Copy plain objects: history entries may be reactive proxies and
+		// cannot be structured-cloned.
+		headers = ensureRowIds(
+			entry.headers.length
+				? entry.headers.map(h => ({ key: h.key, value: h.value }))
+				: [{ key: 'Content-Type', value: 'application/json' }]
+		);
 		response = '';
 		responseStatus = 0;
 		responseHeaders = '';
