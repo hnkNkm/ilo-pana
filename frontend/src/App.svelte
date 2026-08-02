@@ -22,7 +22,23 @@
 	let selectedMethod = $state('GET');
 	let requestBody = $state('');
 	let bodyFormat = $state<'raw' | 'form-data' | 'urlencoded'>('raw');
+
+	// Stable per-row IDs so async callbacks and keyed #each never act on the
+	// wrong row after deletions/reordering.
+	function newRowId(): string {
+		return crypto.randomUUID();
+	}
+
+	function ensureRowIds<T extends object>(rows: T[]): Array<T & { id: string }> {
+		for (const row of rows) {
+			const r = row as T & { id?: string };
+			if (!r.id) r.id = newRowId();
+		}
+		return rows as Array<T & { id: string }>;
+	}
+
 	interface FormFieldRow {
+		id: string;
 		key: string;
 		value: string;
 		type: 'text' | 'file';
@@ -33,39 +49,44 @@
 	let formFields = $state<FormFieldRow[]>([]);
 
 	function addFormField() {
-		formFields = [...formFields, { key: '', value: '', type: 'text', fileName: '', fileContent: [], contentType: '' }];
+		formFields = [...formFields, { id: newRowId(), key: '', value: '', type: 'text', fileName: '', fileContent: [], contentType: '' }];
 	}
 
-	function removeFormField(index: number) {
-		formFields = formFields.filter((_, i) => i !== index);
+	function removeFormField(id: string) {
+		formFields = formFields.filter((f) => f.id !== id);
 	}
 
-	function updateFormField(index: number, field: 'key' | 'value' | 'type', value: string) {
-		const f = formFields[index];
+	function updateFormField(id: string, field: 'key' | 'value' | 'type', value: string) {
+		const f = formFields.find((row) => row.id === id);
+		if (!f) return;
 		if (field === 'type') f.type = value as 'text' | 'file';
 		else f[field] = value;
 		formFields = formFields;
 	}
 
-	function fileInputId(index: number) {
-		return `form-file-input-${index}`;
+	function fileInputId(id: string) {
+		return `form-file-input-${id}`;
 	}
 
-	function handleFormFileSelect(index: number, input: HTMLInputElement) {
+	function handleFormFileSelect(id: string, input: HTMLInputElement) {
 		const file = input.files?.[0];
 		if (!file) return;
 		file.arrayBuffer().then((buf) => {
-			formFields[index].fileName = file.name;
-			formFields[index].fileContent = Array.from(new Uint8Array(buf));
-			formFields[index].contentType = file.type || 'application/octet-stream';
+			// Resolve by ID, not index: the row may have been deleted or
+			// reordered while the file was being read.
+			const row = formFields.find((f) => f.id === id);
+			if (!row) return;
+			row.fileName = file.name;
+			row.fileContent = Array.from(new Uint8Array(buf));
+			row.contentType = file.type || 'application/octet-stream';
 			formFields = formFields;
 		});
 	}
-	let headers = $state<Array<{key: string, value: string}>>([
-		{ key: 'Content-Type', value: 'application/json' }
+	let headers = $state<Array<{id: string, key: string, value: string}>>([
+		{ id: newRowId(), key: 'Content-Type', value: 'application/json' }
 	]);
-	let queryParams = $state<Array<{key: string, value: string, enabled: boolean}>>([]);
-	let variables = $state<Array<{key: string, value: string}>>([]);
+	let queryParams = $state<Array<{id: string, key: string, value: string, enabled: boolean}>>([]);
+	let variables = $state<Array<{id: string, key: string, value: string}>>([]);
 	let timeoutSec = $state(30);
 	let sessionName = $state('');
 	let sessionNew = $state(false);
@@ -81,20 +102,24 @@
 	let authToken = $state('');
 
 	// Assertions (response validation rules)
-	let assertionRules = $state<assertion.Rule[]>([]);
+	type AssertionRuleRow = assertion.Rule & { id: string };
+	let assertionRules = $state<AssertionRuleRow[]>([]);
 	let assertionResults = $state<assertion.Result[]>([]);
 	let assertionError = $state('');
 
 	function addAssertionRule() {
-		assertionRules = [...assertionRules, new assertion.Rule({ kind: 'status_equals', target: '200' })];
+		const rule = Object.assign(new assertion.Rule({ kind: 'status_equals', target: '200' }), { id: newRowId() });
+		assertionRules = [...assertionRules, rule];
 	}
 
-	function removeAssertionRule(index: number) {
-		assertionRules = assertionRules.filter((_, i) => i !== index);
+	function removeAssertionRule(id: string) {
+		assertionRules = assertionRules.filter((r) => r.id !== id);
 	}
 
-	function updateAssertionRule(index: number, field: 'name' | 'kind' | 'target' | 'expected', value: string) {
-		assertionRules[index][field] = value;
+	function updateAssertionRule(id: string, field: 'name' | 'kind' | 'target' | 'expected', value: string) {
+		const rule = assertionRules.find((r) => r.id === id);
+		if (!rule) return;
+		rule[field] = value;
 		assertionRules = assertionRules;
 	}
 
@@ -127,7 +152,7 @@
 	let environmentName = $state(''); // selected environment ('' = none)
 	let environments = $state<Array<string>>([]);
 	let envName = $state('');
-	let envVars = $state<Array<{key: string, value: string}>>([]);
+	let envVars = $state<Array<{id: string, key: string, value: string}>>([]);
 	let envError = $state('');
 	let envMessage = $state('');
 
@@ -160,7 +185,8 @@
 		const entry: HistoryEntry = {
 			method: selectedMethod,
 			url,
-			headers: headers.filter(h => h.key?.trim()),
+			// Clone so later editor edits cannot mutate the stored history entry.
+			headers: structuredClone(headers.filter(h => h.key?.trim())),
 			body: requestBody,
 			timestamp: Date.now(),
 		};
@@ -181,7 +207,8 @@
 		requestBody = entry.body;
 		bodyFormat = 'raw';
 		formFields = [];
-		headers = entry.headers.length ? entry.headers : [{ key: 'Content-Type', value: 'application/json' }];
+		// Clone so editing the restored rows cannot corrupt the history entry.
+		headers = ensureRowIds(structuredClone(entry.headers.length ? entry.headers : [{ key: 'Content-Type', value: 'application/json' }]));
 		response = '';
 		responseStatus = 0;
 		responseHeaders = '';
@@ -232,7 +259,7 @@
 			const env = await GetEnvironment(name);
 			envName = env.name;
 			envVars = env.variables
-				? Object.entries(env.variables).map(([key, value]) => ({ key, value }))
+				? ensureRowIds(Object.entries(env.variables).map(([key, value]) => ({ key, value })))
 				: [];
 		} catch (e) {
 			envError = extractErrorMessage(e);
@@ -276,15 +303,17 @@
 	}
 
 	function addEnvVar() {
-		envVars = [...envVars, { key: '', value: '' }];
+		envVars = [...envVars, { id: newRowId(), key: '', value: '' }];
 	}
 
-	function removeEnvVar(index: number) {
-		envVars = envVars.filter((_, i) => i !== index);
+	function removeEnvVar(id: string) {
+		envVars = envVars.filter((v) => v.id !== id);
 	}
 
-	function updateEnvVar(index: number, field: 'key' | 'value', value: string) {
-		envVars[index][field] = value;
+	function updateEnvVar(id: string, field: 'key' | 'value', value: string) {
+		const v = envVars.find((row) => row.id === id);
+		if (!v) return;
+		v[field] = value;
 		envVars = envVars;
 	}
 
@@ -359,10 +388,10 @@
 		bodyFormat = 'raw';
 		formFields = [];
 		headers = req.headers && Object.keys(req.headers).length
-			? Object.entries(req.headers).map(([key, value]) => ({ key, value }))
-			: [{ key: 'Content-Type', value: 'application/json' }];
+			? ensureRowIds(Object.entries(req.headers).map(([key, value]) => ({ key, value })))
+			: [{ id: newRowId(), key: 'Content-Type', value: 'application/json' }];
 		variables = req.variables
-			? Object.entries(req.variables).map(([key, value]) => ({ key, value }))
+			? ensureRowIds(Object.entries(req.variables).map(([key, value]) => ({ key, value })))
 			: [];
 		response = '';
 		responseStatus = 0;
@@ -452,22 +481,24 @@
 	const httpMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 
 	function addHeader() {
-		headers = [...headers, { key: '', value: '' }];
+		headers = [...headers, { id: newRowId(), key: '', value: '' }];
 	}
 
-	function removeHeader(index: number) {
-		headers = headers.filter((_, i) => i !== index);
+	function removeHeader(id: string) {
+		headers = headers.filter((h) => h.id !== id);
 	}
 
-	function updateHeader(index: number, field: 'key' | 'value', value: string) {
-		headers[index][field] = value;
+	function updateHeader(id: string, field: 'key' | 'value', value: string) {
+		const h = headers.find((row) => row.id === id);
+		if (!h) return;
+		h[field] = value;
 		headers = headers;
 	}
 
 	// Query parameters — parsed from / merged into the URL
 	function parseQueryParams() {
 		const q = url.split('?')[1];
-		const params: Array<{key: string, value: string, enabled: boolean}> = [];
+		const params: Array<{id: string, key: string, value: string, enabled: boolean}> = [];
 		if (q) {
 			for (const part of q.split('&')) {
 				if (!part) continue;
@@ -475,9 +506,9 @@
 				const rawKey = eq >= 0 ? part.slice(0, eq) : part;
 				const rawValue = eq >= 0 ? part.slice(eq + 1) : '';
 				try {
-					params.push({ key: decodeURIComponent(rawKey), value: decodeURIComponent(rawValue), enabled: true });
+					params.push({ id: newRowId(), key: decodeURIComponent(rawKey), value: decodeURIComponent(rawValue), enabled: true });
 				} catch {
-					params.push({ key: rawKey, value: rawValue, enabled: true });
+					params.push({ id: newRowId(), key: rawKey, value: rawValue, enabled: true });
 				}
 			}
 		}
@@ -493,19 +524,21 @@
 	}
 
 	function addQueryParam() {
-		queryParams = [...queryParams, { key: '', value: '', enabled: true }];
+		queryParams = [...queryParams, { id: newRowId(), key: '', value: '', enabled: true }];
 	}
 
-	function removeQueryParam(index: number) {
-		queryParams = queryParams.filter((_, i) => i !== index);
+	function removeQueryParam(id: string) {
+		queryParams = queryParams.filter((p) => p.id !== id);
 		buildUrlFromParams();
 	}
 
-	function updateQueryParam(index: number, field: 'key' | 'value' | 'enabled', value: string | boolean) {
+	function updateQueryParam(id: string, field: 'key' | 'value' | 'enabled', value: string | boolean) {
+		const p = queryParams.find((row) => row.id === id);
+		if (!p) return;
 		if (field === 'enabled') {
-			queryParams[index].enabled = value as boolean;
+			p.enabled = value as boolean;
 		} else {
-			queryParams[index][field] = value as string;
+			p[field] = value as string;
 		}
 		queryParams = queryParams;
 		buildUrlFromParams();
@@ -531,15 +564,17 @@
 	}
 
 	function addVariable() {
-		variables = [...variables, { key: '', value: '' }];
+		variables = [...variables, { id: newRowId(), key: '', value: '' }];
 	}
 
-	function removeVariable(index: number) {
-		variables = variables.filter((_, i) => i !== index);
+	function removeVariable(id: string) {
+		variables = variables.filter((v) => v.id !== id);
 	}
 
-	function updateVariable(index: number, field: 'key' | 'value', value: string) {
-		variables[index][field] = value;
+	function updateVariable(id: string, field: 'key' | 'value', value: string) {
+		const v = variables.find((row) => row.id === id);
+		if (!v) return;
+		v[field] = value;
 		variables = variables;
 	}
 
@@ -676,8 +711,8 @@
 			parseQueryParams();
 			requestBody = req.body ?? '';
 			headers = req.headers && Object.keys(req.headers).length
-				? Object.entries(req.headers).map(([key, value]) => ({ key, value }))
-				: [{ key: 'Content-Type', value: 'application/json' }];
+				? ensureRowIds(Object.entries(req.headers).map(([key, value]) => ({ key, value })))
+				: [{ id: newRowId(), key: 'Content-Type', value: 'application/json' }];
 			collectionMessage = `Imported ${req.method} ${req.url} from cURL.`;
 		} catch (e) {
 			collectionError = extractErrorMessage(e);
@@ -741,7 +776,9 @@
 				// Null - red
 				.replace(/:\s*(null)/g, ': <span class="text-red-400">$1</span>');
 		} catch {
-			return json;
+			// Non-JSON response body: escape before {@html} insertion so
+			// untrusted HTML from the API cannot become live DOM.
+			return escapeHtml(json);
 		}
 	}
 
@@ -981,31 +1018,31 @@
 							Query parameters are merged into the URL automatically.
 						</p>
 						<div class="space-y-2">
-							{#each queryParams as param, i}
+							{#each queryParams as param (param.id)}
 								<div class="flex gap-2 items-center">
 									<input
 										type="checkbox"
 										checked={param.enabled}
-										onchange={(e) => updateQueryParam(i, 'enabled', e.currentTarget.checked)}
+										onchange={(e) => updateQueryParam(param.id, 'enabled', e.currentTarget.checked)}
 										class="h-4 w-4 shrink-0"
 										title="Enable / disable this parameter"
 									/>
 									<Input
 										placeholder="Parameter name"
 										value={param.key}
-										oninput={(e) => updateQueryParam(i, 'key', e.currentTarget.value)}
+										oninput={(e) => updateQueryParam(param.id, 'key', e.currentTarget.value)}
 										class="flex-1"
 									/>
 									<Input
 										placeholder="Parameter value"
 										value={param.value}
-										oninput={(e) => updateQueryParam(i, 'value', e.currentTarget.value)}
+										oninput={(e) => updateQueryParam(param.id, 'value', e.currentTarget.value)}
 										class="flex-1"
 									/>
 									<Button
 										variant="outline"
 										size="icon"
-										onclick={() => removeQueryParam(i)}
+										onclick={() => removeQueryParam(param.id)}
 									>
 										<Trash2 class="h-4 w-4" />
 									</Button>
@@ -1025,24 +1062,24 @@
 					<!-- Headers Tab -->
 					<TabsContent value="headers" class="space-y-2">
 						<div class="space-y-2">
-							{#each headers as header, i}
+							{#each headers as header (header.id)}
 								<div class="flex gap-2">
 									<Input
 										placeholder="Header name"
 										bind:value={header.key}
-										onchange={(e) => updateHeader(i, 'key', e.currentTarget.value)}
+										onchange={(e) => updateHeader(header.id, 'key', e.currentTarget.value)}
 										class="flex-1"
 									/>
 									<Input
 										placeholder="Header value"
 										bind:value={header.value}
-										onchange={(e) => updateHeader(i, 'value', e.currentTarget.value)}
+										onchange={(e) => updateHeader(header.id, 'value', e.currentTarget.value)}
 										class="flex-1"
 									/>
 									<Button
 										variant="outline"
 										size="icon"
-										onclick={() => removeHeader(i)}
+										onclick={() => removeHeader(header.id)}
 									>
 										<Trash2 class="h-4 w-4" />
 									</Button>
@@ -1093,24 +1130,24 @@
 							{'Variables are referenced with {{NAME}} syntax in the URL, headers, and body.'}
 						</p>
 						<div class="space-y-2">
-							{#each variables as variable, i}
+							{#each variables as variable (variable.id)}
 								<div class="flex gap-2">
 									<Input
 										placeholder="Variable name"
 										bind:value={variable.key}
-										onchange={(e) => updateVariable(i, 'key', e.currentTarget.value)}
+										onchange={(e) => updateVariable(variable.id, 'key', e.currentTarget.value)}
 										class="flex-1"
 									/>
 									<Input
 										placeholder="Variable value"
 										bind:value={variable.value}
-										onchange={(e) => updateVariable(i, 'value', e.currentTarget.value)}
+										onchange={(e) => updateVariable(variable.id, 'value', e.currentTarget.value)}
 										class="flex-1"
 									/>
 									<Button
 										variant="outline"
 										size="icon"
-										onclick={() => removeVariable(i)}
+										onclick={() => removeVariable(variable.id)}
 									>
 										<Trash2 class="h-4 w-4" />
 									</Button>
@@ -1136,7 +1173,7 @@
 							<p class="text-xs text-red-600 dark:text-red-400">{assertionError}</p>
 						{/if}
 						<div class="space-y-2">
-							{#each assertionRules as rule, i}
+							{#each assertionRules as rule (rule.id)}
 								<div class="flex flex-wrap gap-2 items-center">
 									<Select type="single" bind:value={rule.kind}>
 										<SelectTrigger class="w-44 text-sm">
@@ -1155,27 +1192,27 @@
 									<Input
 										placeholder="Name (optional)"
 										value={rule.name}
-										oninput={(e) => updateAssertionRule(i, 'name', e.currentTarget.value)}
+										oninput={(e) => updateAssertionRule(rule.id, 'name', e.currentTarget.value)}
 										class="w-32 text-sm"
 									/>
 									<Input
 										placeholder={assertionTargetPlaceholder(rule.kind)}
 										value={rule.target}
-										oninput={(e) => updateAssertionRule(i, 'target', e.currentTarget.value)}
+										oninput={(e) => updateAssertionRule(rule.id, 'target', e.currentTarget.value)}
 										class="flex-1 min-w-40 text-sm font-mono"
 									/>
 									{#if ruleNeedsExpected(rule.kind)}
 										<Input
 											placeholder="Expected value"
 											value={rule.expected}
-											oninput={(e) => updateAssertionRule(i, 'expected', e.currentTarget.value)}
+											oninput={(e) => updateAssertionRule(rule.id, 'expected', e.currentTarget.value)}
 											class="flex-1 min-w-40 text-sm font-mono"
 										/>
 									{/if}
 									<Button
 										variant="outline"
 										size="icon"
-										onclick={() => removeAssertionRule(i)}
+										onclick={() => removeAssertionRule(rule.id)}
 									>
 										<Trash2 class="h-4 w-4" />
 									</Button>
@@ -1217,12 +1254,12 @@
 								/>
 							{:else}
 								<div class="space-y-2">
-									{#each formFields as f, i}
+									{#each formFields as f (f.id)}
 										<div class="flex flex-wrap gap-2 items-center">
 											<Input
 												placeholder="Field name"
 												value={f.key}
-												oninput={(e) => updateFormField(i, 'key', e.currentTarget.value)}
+												oninput={(e) => updateFormField(f.id, 'key', e.currentTarget.value)}
 												class="w-40 font-mono text-sm"
 											/>
 											{#if bodyFormat === 'form-data'}
@@ -1242,21 +1279,21 @@
 												<Input
 													placeholder="Field value"
 													value={f.value}
-													oninput={(e) => updateFormField(i, 'value', e.currentTarget.value)}
+													oninput={(e) => updateFormField(f.id, 'value', e.currentTarget.value)}
 													class="flex-1 font-mono text-sm"
 												/>
 											{:else}
 												<div class="flex items-center gap-2 flex-1">
 													<input
 														type="file"
-														id={fileInputId(i)}
+														id={fileInputId(f.id)}
 														class="hidden"
-														onchange={(e) => handleFormFileSelect(i, e.currentTarget)}
+														onchange={(e) => handleFormFileSelect(f.id, e.currentTarget)}
 													/>
 													<Button
 														variant="outline"
 														size="sm"
-														onclick={() => document.getElementById(fileInputId(i))?.click()}
+														onclick={() => document.getElementById(fileInputId(f.id))?.click()}
 													>
 														Choose file
 													</Button>
@@ -1265,7 +1302,7 @@
 													</span>
 												</div>
 											{/if}
-											<Button variant="ghost" size="icon" onclick={() => removeFormField(i)} aria-label="Remove field">
+											<Button variant="ghost" size="icon" onclick={() => removeFormField(f.id)} aria-label="Remove field">
 												<X class="h-4 w-4" />
 											</Button>
 										</div>
@@ -1414,21 +1451,21 @@
 							{/if}
 						</div>
 						<div class="space-y-2">
-							{#each envVars as v, i}
+							{#each envVars as v (v.id)}
 								<div class="flex gap-2 items-center">
 									<Input
 										placeholder="Variable name"
 										value={v.key}
-										oninput={(e) => updateEnvVar(i, 'key', e.currentTarget.value)}
+										oninput={(e) => updateEnvVar(v.id, 'key', e.currentTarget.value)}
 										class="flex-1 font-mono"
 									/>
 									<Input
 										placeholder={'Value ({{NAME}} is replaced with this)'}
 										value={v.value}
-										oninput={(e) => updateEnvVar(i, 'value', e.currentTarget.value)}
+										oninput={(e) => updateEnvVar(v.id, 'value', e.currentTarget.value)}
 										class="flex-1 font-mono"
 									/>
-									<Button variant="outline" size="icon" onclick={() => removeEnvVar(i)} title="Remove variable">
+									<Button variant="outline" size="icon" onclick={() => removeEnvVar(v.id)} title="Remove variable">
 										<Trash2 class="h-4 w-4" />
 									</Button>
 								</div>
