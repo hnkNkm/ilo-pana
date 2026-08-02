@@ -31,7 +31,7 @@ Release: push a `v*` tag → GitHub Actions runs GoReleaser v2 (`.goreleaser.yml
 ## Gotchas (verified — don't relearn these)
 
 - **Fresh clone breaks `go build ./...`**: `main.go` has `//go:embed all:frontend/dist`, but `frontend/dist` is gitignored. Build the frontend first (`cd frontend && pnpm install && pnpm build`) or build only `./cmd/ilo-pana`.
-- **`internal/config/parser.go` is dead code**: `HeaderParser`/`URLValidator` there have zero callers. The live paths are `parseHeaders()` in `config.go` and `request.ValidateURL()` in `internal/request/request.go`. Edit those, not parser.go.
+- **`internal/config/parser.go` was dead code and is deleted**: `HeaderParser`/`URLValidator` there had zero callers (its `URLValidator.Validate` rejected any URL containing `//`, i.e. every absolute URL). The live paths are `parseHeaders()` in `config.go` and `request.ValidateURL()` in `internal/request/request.go`. Edit those, not a parser.go.
 - **CLAUDE.md stale claims**: verbose mode is the `-v` flag (there is NO `API_TESTER_VERBOSE` env var); localhost/127.0.0.1 is NOT blocked — `request.ValidateURL` only prints a warning to stderr.
 - **Wails CLI comes from the Nix flake** (`wails` package in `flake.nix`, pinned via `flake.lock`). Do NOT `go install` it — a stray `~/go/bin/wails` shadows the nixpkgs one and is removed by design.
 - **`frontend/wailsjs/` is generated but committed**. After changing exported methods on `App` in `app.go`, regenerate bindings with `wails generate module` (or via `wails dev/build`), and commit the result.
