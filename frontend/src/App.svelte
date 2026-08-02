@@ -1,7 +1,7 @@
 <script lang="ts">
 	import './app.css';
 	import { onMount } from 'svelte';
-	import { ExecuteRequest, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
+	import { ExecuteRequest, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, ImportOpenAPI, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
 	import { collection, environment } from '$wailsjs/go/models';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -335,6 +335,28 @@
 			await refreshCollections();
 		} catch (e) {
 			collectionError = extractErrorMessage(e);
+		}
+	}
+
+	let openapiFileInput: HTMLInputElement | undefined = $state();
+
+	async function importOpenAPIFromFile() {
+		collectionError = '';
+		collectionMessage = '';
+		const file = openapiFileInput?.files?.[0];
+		if (!file) return;
+		try {
+			const content = await file.text();
+			const target = collectionName.trim();
+			const n = await ImportOpenAPI(content, target);
+			collectionMessage = target
+				? `Imported ${n} endpoints into "${target}".`
+				: `Imported ${n} endpoints.`;
+			await refreshCollections();
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		} finally {
+			if (openapiFileInput) openapiFileInput.value = '';
 		}
 	}
 
@@ -729,6 +751,22 @@
 					>
 						Import from clipboard
 					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						onclick={() => openapiFileInput?.click()}
+						class="text-xs"
+						title="Import endpoints from an OpenAPI (YAML/JSON) spec into this collection"
+					>
+						Import OpenAPI
+					</Button>
+					<input
+						type="file"
+						accept=".json,.yaml,.yml"
+						class="hidden"
+						bind:this={openapiFileInput}
+						onchange={importOpenAPIFromFile}
+					/>
 					{#if collectionError}
 						<span class="text-xs text-red-600 dark:text-red-400">{collectionError}</span>
 					{/if}

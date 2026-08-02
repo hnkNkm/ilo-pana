@@ -10,6 +10,7 @@ import (
 	"ilo-pana/internal/collection"
 	"ilo-pana/internal/config"
 	"ilo-pana/internal/environment"
+	"ilo-pana/internal/openapi"
 	"ilo-pana/internal/request"
 	"ilo-pana/internal/response"
 	"ilo-pana/internal/variables"
@@ -269,4 +270,52 @@ func (a *App) GetEnvironment(name string) (*environment.Environment, error) {
 // DeleteEnvironment removes an environment entirely.
 func (a *App) DeleteEnvironment(name string) error {
 	return a.environments.Delete(name)
+}
+
+// ImportOpenAPI parses an OpenAPI (YAML/JSON) spec and imports its
+// operations into the named collection (default: the spec's title),
+// returning the number of imported endpoints.
+func (a *App) ImportOpenAPI(content, collectionName string) (int, error) {
+	doc, err := openapi.Parse([]byte(content))
+	if err != nil {
+		return 0, err
+	}
+	if collectionName == "" {
+		collectionName = doc.Title
+	}
+	if collectionName == "" {
+		return 0, fmt.Errorf("collection name is required")
+	}
+
+	c, err := a.collections.Load(collectionName)
+	if err != nil {
+		if !collection.IsNotExist(err) {
+			return 0, err
+		}
+		c = &collection.Collection{
+			Name:    collectionName,
+			Created: time.Now(),
+		}
+	}
+	if c.Created.IsZero() {
+		c.Created = time.Now()
+	}
+	now := time.Now()
+	for _, ep := range doc.Endpoints {
+		c.Upsert(collection.SavedRequest{
+			Name:      ep.Name,
+			Method:    ep.Method,
+			URL:       ep.URL,
+			Headers:   ep.Headers,
+			Body:      ep.Body,
+			Variables: ep.Variables,
+			Created:   now,
+			Updated:   now,
+		})
+	}
+	c.Updated = now
+	if err := a.collections.Save(c); err != nil {
+		return 0, err
+	}
+	return len(doc.Endpoints), nil
 }

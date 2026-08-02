@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ilo-pana/internal/collection"
@@ -175,7 +176,6 @@ func newTestApp(t *testing.T) *App {
 
 func TestEnvironmentsCRUD(t *testing.T) {
 	app := newTestApp(t)
-
 	t.Run("save_and_list", func(t *testing.T) {
 		if err := app.SaveEnvironment("dev", map[string]string{"BASE_URL": "http://localhost:8080"}); err != nil {
 			t.Fatalf("SaveEnvironment() error = %v", err)
@@ -335,6 +335,84 @@ func TestCollectionsCRUD(t *testing.T) {
 		}
 		if err := app.ImportCollection("{bad json"); err == nil {
 			t.Error("ImportCollection() of invalid JSON should error")
+		}
+	})
+}
+
+func TestImportOpenAPI(t *testing.T) {
+	app := newTestApp(t)
+
+	const spec = `
+openapi: 3.0.3
+info:
+  title: Petstore
+servers:
+  - url: https://api.example.com/v1
+paths:
+  /pets/{petId}:
+    get:
+      operationId: getPet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema: {type: string}
+  /pets:
+    post:
+      operationId: createPet
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+components:
+  schemas:
+    Pet:
+      type: object
+      properties:
+        name: {type: string, default: rex}
+`
+
+	t.Run("import_into_named_collection", func(t *testing.T) {
+		n, err := app.ImportOpenAPI(spec, "petstore")
+		if err != nil {
+			t.Fatalf("ImportOpenAPI() error = %v", err)
+		}
+		if n != 2 {
+			t.Errorf("imported = %d, want 2", n)
+		}
+		c, err := app.GetCollection("petstore")
+		if err != nil {
+			t.Fatalf("GetCollection() error = %v", err)
+		}
+		if len(c.Requests) != 2 {
+			t.Fatalf("requests = %d, want 2", len(c.Requests))
+		}
+		get := c.Requests[0]
+		if get.Method != "GET" || get.URL != "https://api.example.com/v1/pets/{{petId}}" {
+			t.Errorf("unexpected imported GET request: %+v", get)
+		}
+		if get.Variables["petId"] != "" {
+			t.Errorf("petId variable not registered: %+v", get.Variables)
+		}
+		post := c.Requests[1]
+		if !strings.Contains(post.Body, `"name": "rex"`) {
+			t.Errorf("POST body should include generated example: %s", post.Body)
+		}
+	})
+
+	t.Run("import_without_name_uses_title", func(t *testing.T) {
+		if _, err := app.ImportOpenAPI(spec, ""); err != nil {
+			t.Fatalf("ImportOpenAPI() without collection name error = %v", err)
+		}
+		if _, err := app.GetCollection("Petstore"); err != nil {
+			t.Errorf("collection should be named after spec title: %v", err)
+		}
+	})
+
+	t.Run("invalid_spec_errors", func(t *testing.T) {
+		if _, err := app.ImportOpenAPI("not: a: spec", "x"); err == nil {
+			t.Error("ImportOpenAPI() of invalid spec should error")
 		}
 	})
 }

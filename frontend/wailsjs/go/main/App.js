@@ -46,6 +46,10 @@ export function ImportCollection(arg1) {
   return window['go']['main']['App']['ImportCollection'](arg1);
 }
 
+export function ImportOpenAPI(arg1, arg2) {
+  return window['go']['main']['App']['ImportOpenAPI'](arg1, arg2);
+}
+
 export function ListCollections() {
   return window['go']['main']['App']['ListCollections']();
 }

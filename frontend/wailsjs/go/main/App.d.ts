@@ -27,6 +27,8 @@ export function Greet(arg1:string):Promise<string>;
 
 export function ImportCollection(arg1:string):Promise<void>;
 
+export function ImportOpenAPI(arg1:string,arg2:string):Promise<number>;
+
 export function ListCollections():Promise<Array<string>>;
 
 export function ListEnvironments():Promise<Array<string>>;
