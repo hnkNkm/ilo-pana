@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"ilo-pana/internal/collection"
+	"ilo-pana/internal/config"
 	"ilo-pana/internal/environment"
 )
 
@@ -159,6 +160,59 @@ func TestExecuteRequest(t *testing.T) {
 		}
 		if result.StatusCode != 200 {
 			t.Errorf("StatusCode = %d, want 200", result.StatusCode)
+		}
+	})
+
+	t.Run("multipart_upload", func(t *testing.T) {
+		result, err := app.ExecuteRequest(RequestParams{
+			Method:     "POST",
+			URL:        server.URL + "/multipart",
+			BodyFormat: "multipart",
+			FormFields: []config.FormField{
+				{Key: "title", Value: "doc"},
+				{Key: "file", IsFile: true, FileName: "a.txt", FileContent: []byte("contents"), ContentType: "text/plain"},
+			},
+			TimeoutMs: 5000,
+		})
+		if err != nil {
+			t.Fatalf("ExecuteRequest() multipart error = %v", err)
+		}
+		var resp struct {
+			Headers map[string][]string `json:"headers"`
+		}
+		if err := json.Unmarshal([]byte(result.Body), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		contentType := ""
+		if v := resp.Headers["Content-Type"]; len(v) > 0 {
+			contentType = v[0]
+		}
+		if !strings.HasPrefix(contentType, "multipart/form-data; boundary=") {
+			t.Errorf("Content-Type = %q, want multipart with boundary", contentType)
+		}
+	})
+
+	t.Run("urlencoded_form", func(t *testing.T) {
+		result, err := app.ExecuteRequest(RequestParams{
+			Method:     "POST",
+			URL:        server.URL + "/form",
+			BodyFormat: "urlencoded",
+			FormFields: []config.FormField{
+				{Key: "name", Value: "alice"},
+			},
+			TimeoutMs: 5000,
+		})
+		if err != nil {
+			t.Fatalf("ExecuteRequest() urlencoded error = %v", err)
+		}
+		var resp struct {
+			Headers map[string][]string `json:"headers"`
+		}
+		if err := json.Unmarshal([]byte(result.Body), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if v := resp.Headers["Content-Type"]; len(v) == 0 || v[0] != "application/x-www-form-urlencoded" {
+			t.Errorf("Content-Type = %v, want urlencoded", v)
 		}
 	})
 }

@@ -13,12 +13,24 @@ import (
 	"ilo-pana/internal/variables"
 )
 
+// FormField is a single entry of a form body (multipart or urlencoded).
+type FormField struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	IsFile      bool   `json:"isFile"`
+	FileName    string `json:"fileName"`
+	FileContent []byte `json:"fileContent"`
+	ContentType string `json:"contentType"`
+}
+
 // Config holds all configuration for an HTTP request
 type Config struct {
 	Method         string
 	URL            string
 	Headers        map[string]string
 	Data           string
+	BodyFormat     string      // "", "raw", "multipart", "urlencoded"
+	FormFields     []FormField // used when BodyFormat is multipart or urlencoded
 	Timeout        time.Duration
 	Verbose        bool
 	Variables      map[string]string

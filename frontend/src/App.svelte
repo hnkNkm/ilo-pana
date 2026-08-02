@@ -2,7 +2,7 @@
 	import './app.css';
 	import { onMount } from 'svelte';
 	import { ExecuteRequest, EvaluateAssertions, GenerateCurl, ImportCurl, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, ImportOpenAPI, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
-	import { collection, environment, assertion, curl } from '$wailsjs/go/models';
+	import { collection, environment, assertion, curl, config, main } from '$wailsjs/go/models';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -14,13 +14,53 @@
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
 	import { Separator } from '$lib/components/ui/separator';
 	import { Alert, AlertDescription } from '$lib/components/ui/alert';
-	import { Plus, Trash2, Send, Copy, Download, Clock } from '@lucide/svelte/icons';
+	import { Plus, Trash2, Send, Copy, Download, Clock, X } from '@lucide/svelte/icons';
 	import JsonTree from '$lib/components/JsonTree.svelte';
 
 	// State variables
 	let url = $state('https://pokeapi.co/api/v2/pokemon/pikachu');
 	let selectedMethod = $state('GET');
 	let requestBody = $state('');
+	let bodyFormat = $state<'raw' | 'form-data' | 'urlencoded'>('raw');
+	interface FormFieldRow {
+		key: string;
+		value: string;
+		type: 'text' | 'file';
+		fileName: string;
+		fileContent: number[];
+		contentType: string;
+	}
+	let formFields = $state<FormFieldRow[]>([]);
+
+	function addFormField() {
+		formFields = [...formFields, { key: '', value: '', type: 'text', fileName: '', fileContent: [], contentType: '' }];
+	}
+
+	function removeFormField(index: number) {
+		formFields = formFields.filter((_, i) => i !== index);
+	}
+
+	function updateFormField(index: number, field: 'key' | 'value' | 'type', value: string) {
+		const f = formFields[index];
+		if (field === 'type') f.type = value as 'text' | 'file';
+		else f[field] = value;
+		formFields = formFields;
+	}
+
+	function fileInputId(index: number) {
+		return `form-file-input-${index}`;
+	}
+
+	function handleFormFileSelect(index: number, input: HTMLInputElement) {
+		const file = input.files?.[0];
+		if (!file) return;
+		file.arrayBuffer().then((buf) => {
+			formFields[index].fileName = file.name;
+			formFields[index].fileContent = Array.from(new Uint8Array(buf));
+			formFields[index].contentType = file.type || 'application/octet-stream';
+			formFields = formFields;
+		});
+	}
 	let headers = $state<Array<{key: string, value: string}>>([
 		{ key: 'Content-Type', value: 'application/json' }
 	]);
@@ -139,6 +179,8 @@
 		url = entry.url;
 		parseQueryParams();
 		requestBody = entry.body;
+		bodyFormat = 'raw';
+		formFields = [];
 		headers = entry.headers.length ? entry.headers : [{ key: 'Content-Type', value: 'application/json' }];
 		response = '';
 		responseStatus = 0;
@@ -314,6 +356,8 @@
 		url = req.url;
 		parseQueryParams();
 		requestBody = req.body ?? '';
+		bodyFormat = 'raw';
+		formFields = [];
 		headers = req.headers && Object.keys(req.headers).length
 			? Object.entries(req.headers).map(([key, value]) => ({ key, value }))
 			: [{ key: 'Content-Type', value: 'application/json' }];
@@ -525,17 +569,35 @@
 		}
 
 		try {
-			const result = await ExecuteRequest({
-				Method: selectedMethod,
-				URL: url,
-				Body: requestBody,
-				Headers: headersMap,
-				TimeoutMs: timeoutSec * 1000,
-				SessionName: sessionName,
-				SessionNew: sessionNew,
-				Variables: variablesMap,
-				Environment: environmentName,
-			});
+			const formFieldsForSend = formFields
+				.filter((f) => f.key.trim())
+				.map(
+					(f) =>
+						new config.FormField({
+							key: f.key.trim(),
+							value: f.value,
+							isFile: f.type === 'file',
+							fileName: f.type === 'file' ? f.fileName : '',
+							fileContent: f.type === 'file' ? f.fileContent : [],
+							contentType: f.contentType,
+						})
+				);
+
+			const result = await ExecuteRequest(
+				new main.RequestParams({
+					Method: selectedMethod,
+					URL: url,
+					Body: requestBody,
+					BodyFormat: bodyFormat === 'raw' ? '' : bodyFormat === 'form-data' ? 'multipart' : bodyFormat,
+					FormFields: formFieldsForSend,
+					Headers: headersMap,
+					TimeoutMs: timeoutSec * 1000,
+					SessionName: sessionName,
+					SessionNew: sessionNew,
+					Variables: variablesMap,
+					Environment: environmentName,
+				})
+			);
 
 			responseStatus = result.statusCode;
 			responseTime = result.elapsedMs;
@@ -1132,11 +1194,89 @@
 					
 					<!-- Body Tab -->
 					<TabsContent value="body">
-						<Textarea
-							placeholder="Request body (JSON, XML, etc.)"
-							bind:value={requestBody}
-							class="min-h-[200px] font-mono text-sm"
-						/>
+						<div class="space-y-2">
+							<div class="flex flex-wrap gap-2">
+								<div class="w-36">
+									<Select type="single" bind:value={bodyFormat}>
+										<SelectTrigger>
+											<span>{bodyFormat === 'raw' ? 'Raw' : bodyFormat === 'form-data' ? 'Form-Data' : 'URL Encoded'}</span>
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="raw">Raw</SelectItem>
+											<SelectItem value="form-data">Form-Data</SelectItem>
+											<SelectItem value="urlencoded">URL Encoded</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+							</div>
+							{#if bodyFormat === 'raw'}
+								<Textarea
+									placeholder="Request body (JSON, XML, etc.)"
+									bind:value={requestBody}
+									class="min-h-[200px] font-mono text-sm"
+								/>
+							{:else}
+								<div class="space-y-2">
+									{#each formFields as f, i}
+										<div class="flex flex-wrap gap-2 items-center">
+											<Input
+												placeholder="Field name"
+												value={f.key}
+												oninput={(e) => updateFormField(i, 'key', e.currentTarget.value)}
+												class="w-40 font-mono text-sm"
+											/>
+											{#if bodyFormat === 'form-data'}
+												<div class="w-24">
+													<Select type="single" bind:value={f.type}>
+														<SelectTrigger>
+															<span>{f.type === 'file' ? 'File' : 'Text'}</span>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="text">Text</SelectItem>
+															<SelectItem value="file">File</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
+											{/if}
+											{#if bodyFormat === 'urlencoded' || f.type === 'text'}
+												<Input
+													placeholder="Field value"
+													value={f.value}
+													oninput={(e) => updateFormField(i, 'value', e.currentTarget.value)}
+													class="flex-1 font-mono text-sm"
+												/>
+											{:else}
+												<div class="flex items-center gap-2 flex-1">
+													<input
+														type="file"
+														id={fileInputId(i)}
+														class="hidden"
+														onchange={(e) => handleFormFileSelect(i, e.currentTarget)}
+													/>
+													<Button
+														variant="outline"
+														size="sm"
+														onclick={() => document.getElementById(fileInputId(i))?.click()}
+													>
+														Choose file
+													</Button>
+													<span class="text-xs font-mono text-slate-400 truncate">
+														{f.fileName || 'No file chosen'}
+													</span>
+												</div>
+											{/if}
+											<Button variant="ghost" size="icon" onclick={() => removeFormField(i)} aria-label="Remove field">
+												<X class="h-4 w-4" />
+											</Button>
+										</div>
+									{/each}
+									<Button variant="outline" size="sm" onclick={addFormField}>
+										<Plus class="h-4 w-4" />
+										Add field
+									</Button>
+								</div>
+							{/if}
+						</div>
 					</TabsContent>
 				</Tabs>
 			</CardContent>

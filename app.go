@@ -49,6 +49,8 @@ type RequestParams struct {
 	Method      string
 	URL         string
 	Body        string
+	BodyFormat  string // "", "raw", "multipart", "urlencoded"
+	FormFields  []config.FormField
 	Headers     map[string]string
 	TimeoutMs   int // Timeout in milliseconds, default 30000 (30 seconds)
 	SessionName string
@@ -81,12 +83,18 @@ func (a *App) ExecuteRequest(params RequestParams) (*response.ResponseData, erro
 	expandedURL := params.URL
 	expandedHeaders := params.Headers
 	expandedBody := params.Body
+	expandedFields := params.FormFields
 	if len(vars) > 0 {
 		expander := variables.New()
 		expander.SetAll(vars)
 		expandedURL = expander.Expand(params.URL)
 		expandedHeaders = expander.ExpandHeaders(params.Headers)
 		expandedBody = expander.Expand(params.Body)
+		for i := range params.FormFields {
+			params.FormFields[i].Value = expander.Expand(params.FormFields[i].Value)
+			params.FormFields[i].FileName = expander.Expand(params.FormFields[i].FileName)
+		}
+		expandedFields = params.FormFields
 	}
 
 	// Validate
@@ -111,6 +119,8 @@ func (a *App) ExecuteRequest(params RequestParams) (*response.ResponseData, erro
 		Method:         method,
 		URL:            expandedURL,
 		Data:           expandedBody,
+		BodyFormat:     params.BodyFormat,
+		FormFields:     expandedFields,
 		Headers:        expandedHeaders,
 		Timeout:        timeout,
 		Verbose:        false,

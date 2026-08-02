@@ -144,6 +144,33 @@ export namespace collection {
 
 }
 
+export namespace config {
+	
+	export class FormField {
+	    key: string;
+	    value: string;
+	    isFile: boolean;
+	    fileName: string;
+	    fileContent: number[];
+	    contentType: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FormField(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.value = source["value"];
+	        this.isFile = source["isFile"];
+	        this.fileName = source["fileName"];
+	        this.fileContent = source["fileContent"];
+	        this.contentType = source["contentType"];
+	    }
+	}
+
+}
+
 export namespace curl {
 	
 	export class Request {
@@ -234,6 +261,8 @@ export namespace main {
 	    Method: string;
 	    URL: string;
 	    Body: string;
+	    BodyFormat: string;
+	    FormFields: config.FormField[];
 	    Headers: Record<string, string>;
 	    TimeoutMs: number;
 	    SessionName: string;
@@ -250,6 +279,8 @@ export namespace main {
 	        this.Method = source["Method"];
 	        this.URL = source["URL"];
 	        this.Body = source["Body"];
+	        this.BodyFormat = source["BodyFormat"];
+	        this.FormFields = this.convertValues(source["FormFields"], config.FormField);
 	        this.Headers = source["Headers"];
 	        this.TimeoutMs = source["TimeoutMs"];
 	        this.SessionName = source["SessionName"];
@@ -257,6 +288,24 @@ export namespace main {
 	        this.Variables = source["Variables"];
 	        this.Environment = source["Environment"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
