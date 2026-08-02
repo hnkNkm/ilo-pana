@@ -20,7 +20,7 @@ import {
 	SaveEnvironment,
 	SaveRequest,
 } from '$wailsjs/go/main/App';
-import { assertion, collection, config, curl, environment, main, response } from '$wailsjs/go/models';
+import { assertion, collection, config, curl, environment, main, response, service } from '$wailsjs/go/models';
 
 export type ResponseData = response.ResponseData;
 export type Collection = collection.Collection;
@@ -51,7 +51,7 @@ export interface SendRequestInput {
 	environment: string;
 }
 
-function toRequestParams(input: SendRequestInput): main.RequestParams {
+function toRequestParams(input: SendRequestInput): service.RequestParams {
 	const formFields = input.formFields
 		.filter((f) => f.key.trim())
 		.map(
@@ -65,7 +65,7 @@ function toRequestParams(input: SendRequestInput): main.RequestParams {
 					contentType: f.contentType,
 				})
 		);
-	return new main.RequestParams({
+	return new service.RequestParams({
 		Method: input.method,
 		URL: input.url,
 		Body: input.body,

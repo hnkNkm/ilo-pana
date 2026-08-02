@@ -257,6 +257,38 @@ export namespace main {
 	        this.Body = source["Body"];
 	    }
 	}
+
+}
+
+export namespace response {
+	
+	export class ResponseData {
+	    statusCode: number;
+	    status: string;
+	    headers: Record<string, string>;
+	    body: string;
+	    elapsedMs: number;
+	    warning?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResponseData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.statusCode = source["statusCode"];
+	        this.status = source["status"];
+	        this.headers = source["headers"];
+	        this.body = source["body"];
+	        this.elapsedMs = source["elapsedMs"];
+	        this.warning = source["warning"];
+	    }
+	}
+
+}
+
+export namespace service {
+	
 	export class RequestParams {
 	    Method: string;
 	    URL: string;
@@ -306,33 +338,6 @@ export namespace main {
 		    }
 		    return a;
 		}
-	}
-
-}
-
-export namespace response {
-	
-	export class ResponseData {
-	    statusCode: number;
-	    status: string;
-	    headers: Record<string, string>;
-	    body: string;
-	    elapsedMs: number;
-	    warning?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ResponseData(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.statusCode = source["statusCode"];
-	        this.status = source["status"];
-	        this.headers = source["headers"];
-	        this.body = source["body"];
-	        this.elapsedMs = source["elapsedMs"];
-	        this.warning = source["warning"];
-	    }
 	}
 
 }

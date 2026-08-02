@@ -11,6 +11,7 @@ import (
 	"ilo-pana/internal/collection"
 	"ilo-pana/internal/config"
 	"ilo-pana/internal/environment"
+	"ilo-pana/internal/service"
 )
 
 func TestExecuteRequest(t *testing.T) {
@@ -28,7 +29,7 @@ func TestExecuteRequest(t *testing.T) {
 	app := newTestApp(t)
 
 	t.Run("basic_get", func(t *testing.T) {
-		result, err := app.ExecuteRequest(RequestParams{
+		result, err := app.ExecuteRequest(service.RequestParams{
 			Method: "get",
 			URL:    server.URL + "/json",
 			TimeoutMs: 5000,
@@ -45,7 +46,7 @@ func TestExecuteRequest(t *testing.T) {
 	})
 
 	t.Run("variable_expansion", func(t *testing.T) {
-		result, err := app.ExecuteRequest(RequestParams{
+		result, err := app.ExecuteRequest(service.RequestParams{
 			Method: "GET",
 			URL:    "{{BASE}}/users/{{ID}}",
 			Headers: map[string]string{"X-Token": "token-{{TOKEN}}"},
@@ -82,7 +83,7 @@ func TestExecuteRequest(t *testing.T) {
 			t.Fatalf("SaveEnvironment() error = %v", err)
 		}
 
-		result, err := app.ExecuteRequest(RequestParams{
+		result, err := app.ExecuteRequest(service.RequestParams{
 			Method:      "GET",
 			URL:         "{{BASE}}/env/{{ID}}",
 			TimeoutMs:   5000,
@@ -103,7 +104,7 @@ func TestExecuteRequest(t *testing.T) {
 	})
 
 	t.Run("request_variables_override_environment", func(t *testing.T) {
-		result, err := app.ExecuteRequest(RequestParams{
+		result, err := app.ExecuteRequest(service.RequestParams{
 			Method:      "GET",
 			URL:         "{{BASE}}/override",
 			Headers:     map[string]string{"X-Mode": "{{MODE}}"},
@@ -126,7 +127,7 @@ func TestExecuteRequest(t *testing.T) {
 	})
 
 	t.Run("missing_environment_errors", func(t *testing.T) {
-		_, err := app.ExecuteRequest(RequestParams{
+		_, err := app.ExecuteRequest(service.RequestParams{
 			Method:      "GET",
 			URL:         server.URL,
 			TimeoutMs:   5000,
@@ -138,7 +139,7 @@ func TestExecuteRequest(t *testing.T) {
 	})
 
 	t.Run("invalid_url", func(t *testing.T) {
-		_, err := app.ExecuteRequest(RequestParams{
+		_, err := app.ExecuteRequest(service.RequestParams{
 			Method: "GET",
 			URL:    "not-a-url",
 			TimeoutMs: 5000,
@@ -150,7 +151,7 @@ func TestExecuteRequest(t *testing.T) {
 
 	t.Run("timeout_clamped_to_max", func(t *testing.T) {
 		// TimeoutMs above the 5-minute cap should be accepted (clamped server-side)
-		result, err := app.ExecuteRequest(RequestParams{
+		result, err := app.ExecuteRequest(service.RequestParams{
 			Method: "GET",
 			URL:    server.URL,
 			TimeoutMs: 999999999,
@@ -164,7 +165,7 @@ func TestExecuteRequest(t *testing.T) {
 	})
 
 	t.Run("multipart_upload", func(t *testing.T) {
-		result, err := app.ExecuteRequest(RequestParams{
+		result, err := app.ExecuteRequest(service.RequestParams{
 			Method:     "POST",
 			URL:        server.URL + "/multipart",
 			BodyFormat: "multipart",
@@ -193,7 +194,7 @@ func TestExecuteRequest(t *testing.T) {
 	})
 
 	t.Run("urlencoded_form", func(t *testing.T) {
-		result, err := app.ExecuteRequest(RequestParams{
+		result, err := app.ExecuteRequest(service.RequestParams{
 			Method:     "POST",
 			URL:        server.URL + "/form",
 			BodyFormat: "urlencoded",
@@ -217,14 +218,22 @@ func TestExecuteRequest(t *testing.T) {
 	})
 }
 
-// newTestApp returns an App backed by a temp-dir collection storage.
+// newTestApp returns an App backed by temp-dir storages.
 func newTestApp(t *testing.T) *App {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "collections")
-	envDir := filepath.Join(t.TempDir(), "environments")
+	collections := service.NewCollectionService(
+		collection.NewFileStorage(filepath.Join(t.TempDir(), "collections")),
+		service.RealClock(),
+	)
+	environments := service.NewEnvironmentService(
+		environment.NewFileStorage(filepath.Join(t.TempDir(), "environments")),
+		service.RealClock(),
+	)
 	return &App{
-		collections:  collection.NewFileStorage(dir),
-		environments: environment.NewFileStorage(envDir),
+		executor:     service.NewRequestExecutor(environments),
+		collections:  collections,
+		environments: environments,
+		openapi:      service.NewOpenAPIImporter(collections, service.RealClock()),
 	}
 }
 
