@@ -5,6 +5,7 @@ import {assertion} from '../models';
 import {main} from '../models';
 import {collection} from '../models';
 import {environment} from '../models';
+import {curl} from '../models';
 
 export function DeleteCollection(arg1:string):Promise<void>;
 
@@ -22,6 +23,8 @@ export function ExecuteRequestWithTimeout(arg1:string,arg2:string,arg3:string,ar
 
 export function ExportCollection(arg1:string):Promise<string>;
 
+export function GenerateCurl(arg1:main.CurlParams):Promise<string>;
+
 export function GetCollection(arg1:string):Promise<collection.Collection>;
 
 export function GetEnvironment(arg1:string):Promise<environment.Environment>;
@@ -29,6 +32,8 @@ export function GetEnvironment(arg1:string):Promise<environment.Environment>;
 export function Greet(arg1:string):Promise<string>;
 
 export function ImportCollection(arg1:string):Promise<void>;
+
+export function ImportCurl(arg1:string):Promise<curl.Request>;
 
 export function ImportOpenAPI(arg1:string,arg2:string):Promise<number>;
 

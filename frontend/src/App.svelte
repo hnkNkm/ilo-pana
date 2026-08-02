@@ -1,8 +1,8 @@
 <script lang="ts">
 	import './app.css';
 	import { onMount } from 'svelte';
-	import { ExecuteRequest, EvaluateAssertions, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, ImportOpenAPI, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
-	import { collection, environment, assertion } from '$wailsjs/go/models';
+	import { ExecuteRequest, EvaluateAssertions, GenerateCurl, ImportCurl, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, ImportOpenAPI, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
+	import { collection, environment, assertion, curl } from '$wailsjs/go/models';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -515,19 +515,7 @@
 		responseStatus = 0;
 		responseHeaders = '';
 
-		const headersMap: Record<string, string> = {};
-		for (const h of headers) {
-			if (h.key?.trim()) {
-				headersMap[h.key.trim()] = h.value ?? '';
-			}
-		}
-
-		// Auth header (overrides a manually-entered Authorization header)
-		if (authType === 'basic' && authUsername.trim()) {
-			headersMap['Authorization'] = `Basic ${btoaUtf8(`${authUsername}:${authPassword}`)}`;
-		} else if (authType === 'bearer' && authToken.trim()) {
-			headersMap['Authorization'] = `Bearer ${authToken}`;
-		}
+		const headersMap = buildHeadersMap();
 
 		const variablesMap: Record<string, string> = {};
 		for (const v of variables) {
@@ -577,10 +565,62 @@
 		}
 	}
 
-	function copyResponse() {
+		function copyResponse() {
 		navigator.clipboard.writeText(response);
 	}
 
+	// cURL generation / import
+	function buildHeadersMap(): Record<string, string> {
+		const headersMap: Record<string, string> = {};
+		for (const h of headers) {
+			if (h.key?.trim()) {
+				headersMap[h.key.trim()] = h.value ?? '';
+			}
+		}
+
+		// Auth header (overrides a manually-entered Authorization header)
+		if (authType === 'basic' && authUsername.trim()) {
+			headersMap['Authorization'] = `Basic ${btoaUtf8(`${authUsername}:${authPassword}`)}`;
+		} else if (authType === 'bearer' && authToken.trim()) {
+			headersMap['Authorization'] = `Bearer ${authToken}`;
+		}
+		return headersMap;
+	}
+
+	async function copyAsCurl() {
+		error = '';
+		try {
+			const cmd = await GenerateCurl({
+				Method: selectedMethod,
+				URL: url,
+				Headers: buildHeadersMap(),
+				Body: requestBody,
+			});
+			await navigator.clipboard.writeText(cmd);
+			error = '';
+		} catch (e) {
+			error = extractErrorMessage(e);
+		}
+	}
+
+	async function importCurlFromClipboard() {
+		collectionError = '';
+		collectionMessage = '';
+		try {
+			const cmd = await navigator.clipboard.readText();
+			const req = await ImportCurl(cmd);
+			selectedMethod = req.method;
+			url = req.url;
+			parseQueryParams();
+			requestBody = req.body ?? '';
+			headers = req.headers && Object.keys(req.headers).length
+				? Object.entries(req.headers).map(([key, value]) => ({ key, value }))
+				: [{ key: 'Content-Type', value: 'application/json' }];
+			collectionMessage = `Imported ${req.method} ${req.url} from cURL.`;
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		}
+	}
 	function downloadResponse() {
 		const blob = new Blob([response], { type: 'application/json' });
 		const url = URL.createObjectURL(blob);
@@ -729,6 +769,16 @@
 							Send Request
 						{/if}
 					</Button>
+					<Button
+						variant="outline"
+						onclick={copyAsCurl}
+						disabled={!url}
+						class="text-sm"
+						title="Copy the current request as a curl command"
+					>
+						<Copy class="mr-2 h-4 w-4" />
+						Copy as cURL
+					</Button>
 				</div>
 
 				<!-- Options row: timeout, session -->
@@ -818,6 +868,15 @@
 						title="Import a collection JSON from the clipboard"
 					>
 						Import from clipboard
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						onclick={importCurlFromClipboard}
+						class="text-xs"
+						title="Parse a curl command from the clipboard into the request"
+					>
+						Import cURL
 					</Button>
 					<Button
 						variant="outline"

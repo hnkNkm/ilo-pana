@@ -144,6 +144,29 @@ export namespace collection {
 
 }
 
+export namespace curl {
+	
+	export class Request {
+	    method: string;
+	    url: string;
+	    headers?: Record<string, string>;
+	    body?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Request(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.method = source["method"];
+	        this.url = source["url"];
+	        this.headers = source["headers"];
+	        this.body = source["body"];
+	    }
+	}
+
+}
+
 export namespace environment {
 	
 	export class Environment {
@@ -189,6 +212,24 @@ export namespace environment {
 
 export namespace main {
 	
+	export class CurlParams {
+	    Method: string;
+	    URL: string;
+	    Headers: Record<string, string>;
+	    Body: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CurlParams(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Method = source["Method"];
+	        this.URL = source["URL"];
+	        this.Headers = source["Headers"];
+	        this.Body = source["Body"];
+	    }
+	}
 	export class RequestParams {
 	    Method: string;
 	    URL: string;

@@ -10,6 +10,7 @@ import (
 	"ilo-pana/internal/client"
 	"ilo-pana/internal/collection"
 	"ilo-pana/internal/config"
+	"ilo-pana/internal/curl"
 	"ilo-pana/internal/environment"
 	"ilo-pana/internal/openapi"
 	"ilo-pana/internal/request"
@@ -325,4 +326,28 @@ func (a *App) ImportOpenAPI(content, collectionName string) (int, error) {
 // the pass/fail results in rule order.
 func (a *App) EvaluateAssertions(data *response.ResponseData, rules []assertion.Rule) []assertion.Result {
 	return assertion.Evaluate(data, rules)
+}
+
+// CurlParams holds the current request state for curl generation.
+type CurlParams struct {
+	Method  string
+	URL     string
+	Headers map[string]string
+	Body    string
+}
+
+// GenerateCurl renders the current request as a curl command.
+func (a *App) GenerateCurl(params CurlParams) (string, error) {
+	return curl.Generate(curl.Request{
+		Method:  params.Method,
+		URL:     params.URL,
+		Headers: params.Headers,
+		Body:    params.Body,
+	})
+}
+
+// ImportCurl parses a curl command and returns the reconstructed request.
+func (a *App) ImportCurl(command string) (*curl.Request, error) {
+	req, err := curl.Parse(command)
+	return &req, err
 }
