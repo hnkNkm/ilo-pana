@@ -92,9 +92,14 @@ func TestParse(t *testing.T) {
 			want:    Request{Method: "GET", URL: "https://example.com", Headers: map[string]string{}},
 		},
 		{
-			name:    "multiple data flags concatenate",
+			name:    "multiple data flags concatenate with &",
 			command: `curl -d 'a=1' -d 'b=2' https://example.com`,
-			want:    Request{Method: "POST", URL: "https://example.com", Headers: map[string]string{}, Body: "a=1b=2"},
+			want:    Request{Method: "POST", URL: "https://example.com", Headers: map[string]string{}, Body: "a=1&b=2"},
+		},
+		{
+			name:    "multiple json flags concatenate with &",
+			command: `curl --json '{"a":1}' --json '{"b":2}' https://example.com`,
+			want:    Request{Method: "POST", URL: "https://example.com", Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"a":1}&{"b":2}`},
 		},
 		{
 			name:    "no url",
