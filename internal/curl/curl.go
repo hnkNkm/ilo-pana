@@ -113,6 +113,10 @@ func Parse(command string) (Request, error) {
 				return req, fmt.Errorf("%s requires a value", t)
 			}
 			i++
+			// curl concatenates repeated -d values with '&'.
+			if req.Body != "" {
+				req.Body += "&"
+			}
 			req.Body += tokens[i]
 			if req.Method == "GET" {
 				req.Method = "POST"
@@ -122,6 +126,9 @@ func Parse(command string) (Request, error) {
 				return req, errors.New("--json requires a value")
 			}
 			i++
+			if req.Body != "" {
+				req.Body += "&"
+			}
 			req.Body += tokens[i]
 			req.Headers["Content-Type"] = "application/json"
 			if req.Method == "GET" {

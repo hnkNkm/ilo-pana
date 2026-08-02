@@ -346,6 +346,45 @@ func BenchmarkValidateURL(b *testing.B) {
 	}
 }
 
+func TestBuildRejectsUnknownBodyFormat(t *testing.T) {
+	cfg := &config.Config{
+		Method:     "POST",
+		URL:        "https://api.example.com/x",
+		Headers:    map[string]string{},
+		BodyFormat: config.BodyFormat("multi-part"),
+		Timeout:    5 * time.Second,
+	}
+	_, err := Build(cfg)
+	if err == nil {
+		t.Fatal("Build() error = nil, want unknown body format error")
+	}
+	if !strings.Contains(err.Error(), "unknown body format") {
+		t.Errorf("Build() error = %v, want unknown body format error", err)
+	}
+}
+
+func TestEscapeQuotes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", `doc.txt`, `doc.txt`},
+		{"quote", `a"b`, `a\"b`},
+		{"crlf", "a\r\nb", `a  b`},
+		{"lone cr", "a\rb", `a b`},
+		{"lone lf", "a\nb", `a b`},
+		{"backslash", `a\b`, `a\\b`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := escapeQuotes(tc.in); got != tc.want {
+				t.Errorf("escapeQuotes(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func BenchmarkIsJSON(b *testing.B) {
 	testStrings := []string{
 		`{"key": "value", "nested": {"a": 1, "b": 2}}`,

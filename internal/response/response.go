@@ -28,6 +28,7 @@ type ResponseData struct {
 	Headers    map[string]string  `json:"headers"`
 	Body       string            `json:"body"`
 	ElapsedMs  int64             `json:"elapsedMs"`
+	Warning    string            `json:"warning,omitempty"`
 }
 
 // Handler processes and displays HTTP responses
