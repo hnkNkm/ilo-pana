@@ -16,6 +16,16 @@
 	import { Alert, AlertDescription } from '$lib/components/ui/alert';
 	import { Plus, Trash2, Send, Copy, Download, Clock, X } from '@lucide/svelte/icons';
 	import JsonTree from '$lib/components/JsonTree.svelte';
+	import {
+		DRAFT_VERSION,
+		deserializeDraft,
+		emptyDraft,
+		fromSavedRequest,
+		maskSensitiveHeaders,
+		serializeDraft,
+		toSavedRequest,
+		type RequestDraft,
+	} from '$lib/request-draft';
 
 	// State variables
 	let url = $state('https://pokeapi.co/api/v2/pokemon/pikachu');
@@ -160,11 +170,8 @@
 	const HISTORY_KEY = 'ilo-pana-request-history';
 	const HISTORY_MAX = 10;
 
-	interface HistoryEntry {
-		method: string;
-		url: string;
-		headers: {key: string, value: string}[];
-		body: string;
+	// A history entry is a full request draft plus a timestamp.
+	interface HistoryEntry extends RequestDraft {
 		timestamp: number;
 	}
 
@@ -173,7 +180,14 @@
 			const raw = localStorage.getItem(HISTORY_KEY);
 			if (!raw) return [];
 			const parsed = JSON.parse(raw);
-			return Array.isArray(parsed) ? parsed : [];
+			if (!Array.isArray(parsed)) return [];
+			return parsed
+				.map((entry) => deserializeDraft(JSON.stringify(entry)))
+				.filter((d): d is RequestDraft => d !== null)
+				.map((draft, i) => {
+					const src = parsed[i] as Record<string, unknown>;
+					return { ...draft, timestamp: typeof src.timestamp === 'number' ? src.timestamp : 0 };
+				});
 		} catch {
 			return [];
 		}
@@ -182,15 +196,10 @@
 	let history = $state<HistoryEntry[]>(loadHistory());
 
 	function saveToHistory() {
-		const entry: HistoryEntry = {
-			method: selectedMethod,
-			url,
-			// Build plain objects: $state rows are reactive proxies and cannot
-			// be structured-cloned, so copy the fields manually.
-			headers: headers.filter(h => h.key?.trim()).map(h => ({ key: h.key, value: h.value })),
-			body: requestBody,
-			timestamp: Date.now(),
-		};
+		const draft = snapshotDraft();
+		// History is automatic: secrets must not be persisted.
+		draft.headers = maskSensitiveHeaders(draft.headers);
+		const entry: HistoryEntry = { ...draft, timestamp: Date.now() };
 		// Deduplicate by method + URL (keep the latest)
 		const filtered = history.filter(h => !(h.method === entry.method && h.url === entry.url));
 		history = [entry, ...filtered].slice(0, HISTORY_MAX);
@@ -202,19 +211,7 @@
 	}
 
 	function restoreRequest(entry: HistoryEntry) {
-		selectedMethod = entry.method;
-		url = entry.url;
-		parseQueryParams();
-		requestBody = entry.body;
-		bodyFormat = 'raw';
-		formFields = [];
-		// Copy plain objects: history entries may be reactive proxies and
-		// cannot be structured-cloned.
-		headers = ensureRowIds(
-			entry.headers.length
-				? entry.headers.map(h => ({ key: h.key, value: h.value }))
-				: [{ key: 'Content-Type', value: 'application/json' }]
-		);
+		applyDraft(entry);
 		response = '';
 		responseStatus = 0;
 		responseHeaders = '';
@@ -228,6 +225,71 @@
 		} catch {
 			// ignore
 		}
+	}
+
+	// RequestDraft snapshot/apply: the single path for serializing editor
+	// state (history, collections, imports) so nothing is lost on restore.
+	function snapshotDraft(): RequestDraft {
+		return {
+			version: DRAFT_VERSION,
+			method: selectedMethod,
+			url,
+			headers: headers.filter(h => h.key?.trim()).map(h => ({ key: h.key, value: h.value })),
+			body: requestBody,
+			bodyFormat,
+			formFields: formFields.map(f => ({
+				key: f.key,
+				value: f.value,
+				type: f.type,
+				fileName: f.fileName,
+				contentType: f.contentType,
+				hasFile: f.type === 'file',
+			})),
+			variables: variables.filter(v => v.key?.trim()).map(v => ({ key: v.key, value: v.value })),
+			timeoutSec,
+			sessionName,
+			sessionNew,
+			environment: environmentName,
+			assertions: assertionRules.map(r => ({
+				name: r.name,
+				kind: r.kind,
+				target: r.target ?? '',
+				expected: r.expected ?? '',
+			})),
+		};
+	}
+
+	function applyDraft(draft: RequestDraft) {
+		selectedMethod = draft.method;
+		url = draft.url;
+		parseQueryParams();
+		requestBody = draft.body;
+		bodyFormat = draft.bodyFormat;
+		formFields = ensureRowIds(
+			draft.formFields.map(f => ({
+				key: f.key,
+				value: f.value,
+				type: f.type,
+				fileName: f.fileName,
+				fileContent: [],
+				contentType: f.contentType,
+			}))
+		);
+		headers = ensureRowIds(
+			draft.headers.length
+				? draft.headers.map(h => ({ key: h.key, value: h.value }))
+				: [{ key: 'Content-Type', value: 'application/json' }]
+		);
+		variables = ensureRowIds(draft.variables.map(v => ({ key: v.key, value: v.value })));
+		timeoutSec = draft.timeoutSec;
+		sessionName = draft.sessionName;
+		sessionNew = draft.sessionNew;
+		environmentName = draft.environment;
+		assertionRules = draft.assertions.map(a =>
+			Object.assign(new assertion.Rule({ kind: a.kind, target: a.target, expected: a.expected }), { id: newRowId() })
+		);
+		assertionResults = [];
+		assertionError = '';
 	}
 
 	// Keyboard shortcuts
@@ -361,24 +423,10 @@
 			return;
 		}
 
-		const headersMap: Record<string, string> = {};
-		for (const h of headers) {
-			if (h.key?.trim()) headersMap[h.key.trim()] = h.value ?? '';
-		}
-		const variablesMap: Record<string, string> = {};
-		for (const v of variables) {
-			if (v.key?.trim()) variablesMap[v.key.trim()] = v.value ?? '';
-		}
+		const saved = toSavedRequest(requestName.trim(), snapshotDraft());
 
 		try {
-			await SaveRequest(collectionName.trim(), new collection.SavedRequest({
-				name: requestName.trim(),
-				method: selectedMethod,
-				url,
-				headers: headersMap,
-				body: requestBody,
-				variables: variablesMap,
-			}));
+			await SaveRequest(collectionName.trim(), new collection.SavedRequest(saved));
 			collectionMessage = `Saved "${requestName.trim()}" to "${collectionName.trim()}".`;
 			await refreshCollections();
 		} catch (e) {
@@ -387,18 +435,7 @@
 	}
 
 	async function loadSavedRequest(c: collection.Collection, req: collection.SavedRequest) {
-		selectedMethod = req.method;
-		url = req.url;
-		parseQueryParams();
-		requestBody = req.body ?? '';
-		bodyFormat = 'raw';
-		formFields = [];
-		headers = req.headers && Object.keys(req.headers).length
-			? ensureRowIds(Object.entries(req.headers).map(([key, value]) => ({ key, value })))
-			: [{ id: newRowId(), key: 'Content-Type', value: 'application/json' }];
-		variables = req.variables
-			? ensureRowIds(Object.entries(req.variables).map(([key, value]) => ({ key, value })))
-			: [];
+		applyDraft(fromSavedRequest(req));
 		response = '';
 		responseStatus = 0;
 		responseHeaders = '';
@@ -712,13 +749,7 @@
 		try {
 			const cmd = await navigator.clipboard.readText();
 			const req = await ImportCurl(cmd);
-			selectedMethod = req.method;
-			url = req.url;
-			parseQueryParams();
-			requestBody = req.body ?? '';
-			headers = req.headers && Object.keys(req.headers).length
-				? ensureRowIds(Object.entries(req.headers).map(([key, value]) => ({ key, value })))
-				: [{ id: newRowId(), key: 'Content-Type', value: 'application/json' }];
+			applyDraft(fromSavedRequest(req));
 			collectionMessage = `Imported ${req.method} ${req.url} from cURL.`;
 		} catch (e) {
 			collectionError = extractErrorMessage(e);
