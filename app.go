@@ -6,9 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"ilo-pana/internal/assertion"
 	"ilo-pana/internal/client"
 	"ilo-pana/internal/collection"
 	"ilo-pana/internal/config"
+	"ilo-pana/internal/curl"
 	"ilo-pana/internal/environment"
 	"ilo-pana/internal/openapi"
 	"ilo-pana/internal/request"
@@ -47,6 +49,8 @@ type RequestParams struct {
 	Method      string
 	URL         string
 	Body        string
+	BodyFormat  string // "", "raw", "multipart", "urlencoded"
+	FormFields  []config.FormField
 	Headers     map[string]string
 	TimeoutMs   int // Timeout in milliseconds, default 30000 (30 seconds)
 	SessionName string
@@ -79,12 +83,18 @@ func (a *App) ExecuteRequest(params RequestParams) (*response.ResponseData, erro
 	expandedURL := params.URL
 	expandedHeaders := params.Headers
 	expandedBody := params.Body
+	expandedFields := params.FormFields
 	if len(vars) > 0 {
 		expander := variables.New()
 		expander.SetAll(vars)
 		expandedURL = expander.Expand(params.URL)
 		expandedHeaders = expander.ExpandHeaders(params.Headers)
 		expandedBody = expander.Expand(params.Body)
+		for i := range params.FormFields {
+			params.FormFields[i].Value = expander.Expand(params.FormFields[i].Value)
+			params.FormFields[i].FileName = expander.Expand(params.FormFields[i].FileName)
+		}
+		expandedFields = params.FormFields
 	}
 
 	// Validate
@@ -109,6 +119,8 @@ func (a *App) ExecuteRequest(params RequestParams) (*response.ResponseData, erro
 		Method:         method,
 		URL:            expandedURL,
 		Data:           expandedBody,
+		BodyFormat:     params.BodyFormat,
+		FormFields:     expandedFields,
 		Headers:        expandedHeaders,
 		Timeout:        timeout,
 		Verbose:        false,
@@ -318,4 +330,34 @@ func (a *App) ImportOpenAPI(content, collectionName string) (int, error) {
 		return 0, err
 	}
 	return len(doc.Endpoints), nil
+}
+
+// EvaluateAssertions runs assertion rules against a response and returns
+// the pass/fail results in rule order.
+func (a *App) EvaluateAssertions(data *response.ResponseData, rules []assertion.Rule) []assertion.Result {
+	return assertion.Evaluate(data, rules)
+}
+
+// CurlParams holds the current request state for curl generation.
+type CurlParams struct {
+	Method  string
+	URL     string
+	Headers map[string]string
+	Body    string
+}
+
+// GenerateCurl renders the current request as a curl command.
+func (a *App) GenerateCurl(params CurlParams) (string, error) {
+	return curl.Generate(curl.Request{
+		Method:  params.Method,
+		URL:     params.URL,
+		Headers: params.Headers,
+		Body:    params.Body,
+	})
+}
+
+// ImportCurl parses a curl command and returns the reconstructed request.
+func (a *App) ImportCurl(command string) (*curl.Request, error) {
+	req, err := curl.Parse(command)
+	return &req, err
 }

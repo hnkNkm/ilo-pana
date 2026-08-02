@@ -1,8 +1,8 @@
 <script lang="ts">
 	import './app.css';
 	import { onMount } from 'svelte';
-	import { ExecuteRequest, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, ImportOpenAPI, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
-	import { collection, environment } from '$wailsjs/go/models';
+	import { ExecuteRequest, EvaluateAssertions, GenerateCurl, ImportCurl, ListCollections, GetCollection, SaveRequest, DeleteRequest, DeleteCollection, ExportCollection, ImportCollection, ImportOpenAPI, SaveEnvironment, ListEnvironments, GetEnvironment, DeleteEnvironment } from '$wailsjs/go/main/App';
+	import { collection, environment, assertion, curl, config, main } from '$wailsjs/go/models';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -14,12 +14,53 @@
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
 	import { Separator } from '$lib/components/ui/separator';
 	import { Alert, AlertDescription } from '$lib/components/ui/alert';
-	import { Plus, Trash2, Send, Copy, Download, Clock } from '@lucide/svelte/icons';
+	import { Plus, Trash2, Send, Copy, Download, Clock, X } from '@lucide/svelte/icons';
+	import JsonTree from '$lib/components/JsonTree.svelte';
 
 	// State variables
 	let url = $state('https://pokeapi.co/api/v2/pokemon/pikachu');
 	let selectedMethod = $state('GET');
 	let requestBody = $state('');
+	let bodyFormat = $state<'raw' | 'form-data' | 'urlencoded'>('raw');
+	interface FormFieldRow {
+		key: string;
+		value: string;
+		type: 'text' | 'file';
+		fileName: string;
+		fileContent: number[];
+		contentType: string;
+	}
+	let formFields = $state<FormFieldRow[]>([]);
+
+	function addFormField() {
+		formFields = [...formFields, { key: '', value: '', type: 'text', fileName: '', fileContent: [], contentType: '' }];
+	}
+
+	function removeFormField(index: number) {
+		formFields = formFields.filter((_, i) => i !== index);
+	}
+
+	function updateFormField(index: number, field: 'key' | 'value' | 'type', value: string) {
+		const f = formFields[index];
+		if (field === 'type') f.type = value as 'text' | 'file';
+		else f[field] = value;
+		formFields = formFields;
+	}
+
+	function fileInputId(index: number) {
+		return `form-file-input-${index}`;
+	}
+
+	function handleFormFileSelect(index: number, input: HTMLInputElement) {
+		const file = input.files?.[0];
+		if (!file) return;
+		file.arrayBuffer().then((buf) => {
+			formFields[index].fileName = file.name;
+			formFields[index].fileContent = Array.from(new Uint8Array(buf));
+			formFields[index].contentType = file.type || 'application/octet-stream';
+			formFields = formFields;
+		});
+	}
 	let headers = $state<Array<{key: string, value: string}>>([
 		{ key: 'Content-Type', value: 'application/json' }
 	]);
@@ -38,6 +79,49 @@
 	let authUsername = $state('');
 	let authPassword = $state('');
 	let authToken = $state('');
+
+	// Assertions (response validation rules)
+	let assertionRules = $state<assertion.Rule[]>([]);
+	let assertionResults = $state<assertion.Result[]>([]);
+	let assertionError = $state('');
+
+	function addAssertionRule() {
+		assertionRules = [...assertionRules, new assertion.Rule({ kind: 'status_equals', target: '200' })];
+	}
+
+	function removeAssertionRule(index: number) {
+		assertionRules = assertionRules.filter((_, i) => i !== index);
+	}
+
+	function updateAssertionRule(index: number, field: 'name' | 'kind' | 'target' | 'expected', value: string) {
+		assertionRules[index][field] = value;
+		assertionRules = assertionRules;
+	}
+
+	function assertionKindLabel(kind: string): string {
+		const labels: Record<string, string> = {
+			status_equals: 'Status equals',
+			status_range: 'Status in range (2xx)',
+			body_contains: 'Body contains',
+			body_not_contains: 'Body not contains',
+			json_path_exists: 'JSON path exists',
+			json_path_equals: 'JSON path equals',
+			json_path_contains: 'JSON path contains',
+		};
+		return labels[kind] ?? kind;
+	}
+
+	let assertionPassedCount = $derived(assertionResults.filter(r => r.passed).length);
+
+	function ruleNeedsExpected(kind: string): boolean {
+		return kind === 'json_path_equals' || kind === 'json_path_contains';
+	}
+
+	function assertionTargetPlaceholder(kind: string): string {
+		if (kind === 'status_equals' || kind === 'status_range') return 'e.g. 200, 2xx, 200-299';
+		if (kind.startsWith('json_path')) return 'e.g. data.items[0].name';
+		return 'e.g. hello world';
+	}
 
 	// Environments (persisted variable sets, e.g. dev/staging/prod)
 	let environmentName = $state(''); // selected environment ('' = none)
@@ -95,6 +179,8 @@
 		url = entry.url;
 		parseQueryParams();
 		requestBody = entry.body;
+		bodyFormat = 'raw';
+		formFields = [];
 		headers = entry.headers.length ? entry.headers : [{ key: 'Content-Type', value: 'application/json' }];
 		response = '';
 		responseStatus = 0;
@@ -270,6 +356,8 @@
 		url = req.url;
 		parseQueryParams();
 		requestBody = req.body ?? '';
+		bodyFormat = 'raw';
+		formFields = [];
 		headers = req.headers && Object.keys(req.headers).length
 			? Object.entries(req.headers).map(([key, value]) => ({ key, value }))
 			: [{ key: 'Content-Type', value: 'application/json' }];
@@ -471,6 +559,80 @@
 		responseStatus = 0;
 		responseHeaders = '';
 
+		const headersMap = buildHeadersMap();
+
+		const variablesMap: Record<string, string> = {};
+		for (const v of variables) {
+			if (v.key?.trim()) {
+				variablesMap[v.key.trim()] = v.value ?? '';
+			}
+		}
+
+		try {
+			const formFieldsForSend = formFields
+				.filter((f) => f.key.trim())
+				.map(
+					(f) =>
+						new config.FormField({
+							key: f.key.trim(),
+							value: f.value,
+							isFile: f.type === 'file',
+							fileName: f.type === 'file' ? f.fileName : '',
+							fileContent: f.type === 'file' ? f.fileContent : [],
+							contentType: f.contentType,
+						})
+				);
+
+			const result = await ExecuteRequest(
+				new main.RequestParams({
+					Method: selectedMethod,
+					URL: url,
+					Body: requestBody,
+					BodyFormat: bodyFormat === 'raw' ? '' : bodyFormat === 'form-data' ? 'multipart' : bodyFormat,
+					FormFields: formFieldsForSend,
+					Headers: headersMap,
+					TimeoutMs: timeoutSec * 1000,
+					SessionName: sessionName,
+					SessionNew: sessionNew,
+					Variables: variablesMap,
+					Environment: environmentName,
+				})
+			);
+
+			responseStatus = result.statusCode;
+			responseTime = result.elapsedMs;
+			response = result.body || '(empty response body)';
+			responseHeaders = Object.entries(result.headers)
+				.map(([k, v]) => `${k}: ${v}`)
+				.join('\n');
+
+			// Run configured assertions against the response
+			assertionError = '';
+			if (assertionRules.length) {
+				try {
+					assertionResults = await EvaluateAssertions(result, assertionRules);
+				} catch (e) {
+					assertionResults = [];
+					assertionError = extractErrorMessage(e);
+				}
+			} else {
+				assertionResults = [];
+			}
+
+			saveToHistory();
+		} catch (err) {
+			error = extractErrorMessage(err);
+		} finally {
+			isLoading = false;
+		}
+	}
+
+		function copyResponse() {
+		navigator.clipboard.writeText(response);
+	}
+
+	// cURL generation / import
+	function buildHeadersMap(): Record<string, string> {
 		const headersMap: Record<string, string> = {};
 		for (const h of headers) {
 			if (h.key?.trim()) {
@@ -484,46 +646,43 @@
 		} else if (authType === 'bearer' && authToken.trim()) {
 			headersMap['Authorization'] = `Bearer ${authToken}`;
 		}
+		return headersMap;
+	}
 
-		const variablesMap: Record<string, string> = {};
-		for (const v of variables) {
-			if (v.key?.trim()) {
-				variablesMap[v.key.trim()] = v.value ?? '';
-			}
-		}
-
+	async function copyAsCurl() {
+		error = '';
 		try {
-			const result = await ExecuteRequest({
+			const cmd = await GenerateCurl({
 				Method: selectedMethod,
 				URL: url,
+				Headers: buildHeadersMap(),
 				Body: requestBody,
-				Headers: headersMap,
-				TimeoutMs: timeoutSec * 1000,
-				SessionName: sessionName,
-				SessionNew: sessionNew,
-				Variables: variablesMap,
-				Environment: environmentName,
 			});
-
-			responseStatus = result.statusCode;
-			responseTime = result.elapsedMs;
-			response = result.body || '(empty response body)';
-			responseHeaders = Object.entries(result.headers)
-				.map(([k, v]) => `${k}: ${v}`)
-				.join('\n');
-
-			saveToHistory();
-		} catch (err) {
-			error = extractErrorMessage(err);
-		} finally {
-			isLoading = false;
+			await navigator.clipboard.writeText(cmd);
+			error = '';
+		} catch (e) {
+			error = extractErrorMessage(e);
 		}
 	}
 
-	function copyResponse() {
-		navigator.clipboard.writeText(response);
+	async function importCurlFromClipboard() {
+		collectionError = '';
+		collectionMessage = '';
+		try {
+			const cmd = await navigator.clipboard.readText();
+			const req = await ImportCurl(cmd);
+			selectedMethod = req.method;
+			url = req.url;
+			parseQueryParams();
+			requestBody = req.body ?? '';
+			headers = req.headers && Object.keys(req.headers).length
+				? Object.entries(req.headers).map(([key, value]) => ({ key, value }))
+				: [{ key: 'Content-Type', value: 'application/json' }];
+			collectionMessage = `Imported ${req.method} ${req.url} from cURL.`;
+		} catch (e) {
+			collectionError = extractErrorMessage(e);
+		}
 	}
-
 	function downloadResponse() {
 		const blob = new Blob([response], { type: 'application/json' });
 		const url = URL.createObjectURL(blob);
@@ -585,6 +744,17 @@
 			return json;
 		}
 	}
+
+	// Response body view mode: raw / pretty / tree
+	let responseViewMode = $state<'raw' | 'pretty' | 'tree'>('pretty');
+	const parsedResponse = $derived.by(() => {
+		try {
+			return JSON.parse(response);
+		} catch {
+			return null;
+		}
+	});
+	const responseIsJson = $derived(parsedResponse !== null);
 </script>
 
 <main class="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 p-4">
@@ -660,6 +830,16 @@
 							<Send class="mr-2 h-4 w-4" />
 							Send Request
 						{/if}
+					</Button>
+					<Button
+						variant="outline"
+						onclick={copyAsCurl}
+						disabled={!url}
+						class="text-sm"
+						title="Copy the current request as a curl command"
+					>
+						<Copy class="mr-2 h-4 w-4" />
+						Copy as cURL
 					</Button>
 				</div>
 
@@ -754,6 +934,15 @@
 					<Button
 						variant="outline"
 						size="sm"
+						onclick={importCurlFromClipboard}
+						class="text-xs"
+						title="Parse a curl command from the clipboard into the request"
+					>
+						Import cURL
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
 						onclick={() => openapiFileInput?.click()}
 						class="text-xs"
 						title="Import endpoints from an OpenAPI (YAML/JSON) spec into this collection"
@@ -777,13 +966,14 @@
 
 				<!-- Request Configuration Tabs -->
 				<Tabs value="params" class="w-full">
-					<TabsList class="grid w-full grid-cols-5">
-						<TabsTrigger value="params">Params</TabsTrigger>
-						<TabsTrigger value="headers">Headers</TabsTrigger>
-						<TabsTrigger value="auth">Auth</TabsTrigger>
-						<TabsTrigger value="variables">Variables</TabsTrigger>
-						<TabsTrigger value="body" disabled={selectedMethod === 'GET' || selectedMethod === 'HEAD'}>Body</TabsTrigger>
-					</TabsList>
+				<TabsList class="grid w-full grid-cols-6">
+					<TabsTrigger value="params">Params</TabsTrigger>
+					<TabsTrigger value="headers">Headers</TabsTrigger>
+					<TabsTrigger value="auth">Auth</TabsTrigger>
+					<TabsTrigger value="variables">Variables</TabsTrigger>
+					<TabsTrigger value="assertions">Assertions</TabsTrigger>
+					<TabsTrigger value="body" disabled={selectedMethod === 'GET' || selectedMethod === 'HEAD'}>Body</TabsTrigger>
+				</TabsList>
 
 					<!-- Params Tab -->
 					<TabsContent value="params" class="space-y-2">
@@ -936,14 +1126,157 @@
 							Add Variable
 						</Button>
 					</TabsContent>
+
+					<!-- Assertions Tab -->
+					<TabsContent value="assertions" class="space-y-2">
+						<p class="text-xs text-slate-500 dark:text-slate-400">
+							Rules run against the response after each send. JSON paths use dot notation, e.g. data.items[0].name.
+						</p>
+						{#if assertionError}
+							<p class="text-xs text-red-600 dark:text-red-400">{assertionError}</p>
+						{/if}
+						<div class="space-y-2">
+							{#each assertionRules as rule, i}
+								<div class="flex flex-wrap gap-2 items-center">
+									<Select type="single" bind:value={rule.kind}>
+										<SelectTrigger class="w-44 text-sm">
+											<span>{assertionKindLabel(rule.kind)}</span>
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="status_equals">Status equals</SelectItem>
+											<SelectItem value="status_range">Status in range (2xx)</SelectItem>
+											<SelectItem value="body_contains">Body contains</SelectItem>
+											<SelectItem value="body_not_contains">Body not contains</SelectItem>
+											<SelectItem value="json_path_exists">JSON path exists</SelectItem>
+											<SelectItem value="json_path_equals">JSON path equals</SelectItem>
+											<SelectItem value="json_path_contains">JSON path contains</SelectItem>
+										</SelectContent>
+									</Select>
+									<Input
+										placeholder="Name (optional)"
+										value={rule.name}
+										oninput={(e) => updateAssertionRule(i, 'name', e.currentTarget.value)}
+										class="w-32 text-sm"
+									/>
+									<Input
+										placeholder={assertionTargetPlaceholder(rule.kind)}
+										value={rule.target}
+										oninput={(e) => updateAssertionRule(i, 'target', e.currentTarget.value)}
+										class="flex-1 min-w-40 text-sm font-mono"
+									/>
+									{#if ruleNeedsExpected(rule.kind)}
+										<Input
+											placeholder="Expected value"
+											value={rule.expected}
+											oninput={(e) => updateAssertionRule(i, 'expected', e.currentTarget.value)}
+											class="flex-1 min-w-40 text-sm font-mono"
+										/>
+									{/if}
+									<Button
+										variant="outline"
+										size="icon"
+										onclick={() => removeAssertionRule(i)}
+									>
+										<Trash2 class="h-4 w-4" />
+									</Button>
+								</div>
+							{/each}
+						</div>
+						<Button
+							variant="outline"
+							onclick={addAssertionRule}
+							class="w-full"
+						>
+							<Plus class="mr-2 h-4 w-4" />
+							Add Assertion
+						</Button>
+					</TabsContent>
 					
 					<!-- Body Tab -->
 					<TabsContent value="body">
-						<Textarea
-							placeholder="Request body (JSON, XML, etc.)"
-							bind:value={requestBody}
-							class="min-h-[200px] font-mono text-sm"
-						/>
+						<div class="space-y-2">
+							<div class="flex flex-wrap gap-2">
+								<div class="w-36">
+									<Select type="single" bind:value={bodyFormat}>
+										<SelectTrigger>
+											<span>{bodyFormat === 'raw' ? 'Raw' : bodyFormat === 'form-data' ? 'Form-Data' : 'URL Encoded'}</span>
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="raw">Raw</SelectItem>
+											<SelectItem value="form-data">Form-Data</SelectItem>
+											<SelectItem value="urlencoded">URL Encoded</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+							</div>
+							{#if bodyFormat === 'raw'}
+								<Textarea
+									placeholder="Request body (JSON, XML, etc.)"
+									bind:value={requestBody}
+									class="min-h-[200px] font-mono text-sm"
+								/>
+							{:else}
+								<div class="space-y-2">
+									{#each formFields as f, i}
+										<div class="flex flex-wrap gap-2 items-center">
+											<Input
+												placeholder="Field name"
+												value={f.key}
+												oninput={(e) => updateFormField(i, 'key', e.currentTarget.value)}
+												class="w-40 font-mono text-sm"
+											/>
+											{#if bodyFormat === 'form-data'}
+												<div class="w-24">
+													<Select type="single" bind:value={f.type}>
+														<SelectTrigger>
+															<span>{f.type === 'file' ? 'File' : 'Text'}</span>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="text">Text</SelectItem>
+															<SelectItem value="file">File</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
+											{/if}
+											{#if bodyFormat === 'urlencoded' || f.type === 'text'}
+												<Input
+													placeholder="Field value"
+													value={f.value}
+													oninput={(e) => updateFormField(i, 'value', e.currentTarget.value)}
+													class="flex-1 font-mono text-sm"
+												/>
+											{:else}
+												<div class="flex items-center gap-2 flex-1">
+													<input
+														type="file"
+														id={fileInputId(i)}
+														class="hidden"
+														onchange={(e) => handleFormFileSelect(i, e.currentTarget)}
+													/>
+													<Button
+														variant="outline"
+														size="sm"
+														onclick={() => document.getElementById(fileInputId(i))?.click()}
+													>
+														Choose file
+													</Button>
+													<span class="text-xs font-mono text-slate-400 truncate">
+														{f.fileName || 'No file chosen'}
+													</span>
+												</div>
+											{/if}
+											<Button variant="ghost" size="icon" onclick={() => removeFormField(i)} aria-label="Remove field">
+												<X class="h-4 w-4" />
+											</Button>
+										</div>
+									{/each}
+									<Button variant="outline" size="sm" onclick={addFormField}>
+										<Plus class="h-4 w-4" />
+										Add field
+									</Button>
+								</div>
+							{/if}
+						</div>
 					</TabsContent>
 				</Tabs>
 			</CardContent>
@@ -1153,6 +1486,15 @@
 							</Badge>
 							<Badge variant="outline">{responseTime}ms</Badge>
 							<Badge variant="outline">{formatBytes(response.length)}</Badge>
+							{#if assertionResults.length > 0}
+								<Badge
+									class={assertionPassedCount === assertionResults.length
+										? 'bg-emerald-600 text-white'
+										: 'bg-red-600 text-white'}
+								>
+									{assertionPassedCount}/{assertionResults.length} assertions
+								</Badge>
+							{/if}
 							<Button
 								variant="outline"
 								size="icon"
@@ -1178,9 +1520,10 @@
 					</Alert>
 				{:else if response}
 					<Tabs value="body" class="w-full">
-						<TabsList class="grid w-full grid-cols-2">
+						<TabsList class="grid w-full grid-cols-3">
 							<TabsTrigger value="body">Body</TabsTrigger>
 							<TabsTrigger value="headers">Headers</TabsTrigger>
+							<TabsTrigger value="assertions">Assertions</TabsTrigger>
 						</TabsList>
 						
 						<TabsContent value="body" class="mt-4">
@@ -1190,15 +1533,46 @@
 										<div class="w-3 h-3 rounded-full bg-red-500"></div>
 										<div class="w-3 h-3 rounded-full bg-yellow-500"></div>
 										<div class="w-3 h-3 rounded-full bg-green-500"></div>
+										<span class="text-xs text-slate-400 font-mono">response.json</span>
 									</div>
-									<span class="text-xs text-slate-400 font-mono">response.json</span>
-									<button onclick={copyResponse} class="text-slate-400 hover:text-white transition-colors p-1" title="Copy to clipboard">
-										<Copy class="h-4 w-4" />
-									</button>
+									<div class="flex items-center gap-2">
+										{#if responseIsJson}
+											<div class="flex rounded-md bg-slate-900 border border-slate-700 p-0.5 text-[11px] font-mono">
+												<button
+													class="rounded px-2 py-0.5 {responseViewMode === 'raw' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}"
+													onclick={() => (responseViewMode = 'raw')}
+													title="Raw response text"
+												>Raw</button>
+												<button
+													class="rounded px-2 py-0.5 {responseViewMode === 'pretty' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}"
+													onclick={() => (responseViewMode = 'pretty')}
+													title="Pretty-printed JSON"
+												>Pretty</button>
+												<button
+													class="rounded px-2 py-0.5 {responseViewMode === 'tree' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}"
+													onclick={() => (responseViewMode = 'tree')}
+													title="Collapsible JSON tree with search"
+												>Tree</button>
+											</div>
+										{/if}
+										<button onclick={copyResponse} class="text-slate-400 hover:text-white transition-colors p-1" title="Copy to clipboard">
+											<Copy class="h-4 w-4" />
+										</button>
+									</div>
 								</div>
-								<ScrollArea class="h-[600px] w-full bg-gray-900" orientation="both">
-									<pre class="block w-full min-w-max p-4 text-left text-[12px] font-mono leading-[1.4] text-gray-200 whitespace-pre">{@html formatJson(response)}</pre>
-								</ScrollArea>
+								{#if responseIsJson && responseViewMode === 'tree'}
+									<div class="h-[600px] w-full bg-gray-900">
+										<JsonTree value={parsedResponse} />
+									</div>
+								{:else if responseIsJson && responseViewMode === 'raw'}
+									<ScrollArea class="h-[600px] w-full bg-gray-900" orientation="both">
+										<pre class="block w-full min-w-max p-4 text-left text-[12px] font-mono leading-[1.4] text-gray-200 whitespace-pre">{response}</pre>
+									</ScrollArea>
+								{:else}
+									<ScrollArea class="h-[600px] w-full bg-gray-900" orientation="both">
+										<pre class="block w-full min-w-max p-4 text-left text-[12px] font-mono leading-[1.4] text-gray-200 whitespace-pre">{@html formatJson(response)}</pre>
+									</ScrollArea>
+								{/if}
 							</div>
 						</TabsContent>
 						
@@ -1216,6 +1590,38 @@
 									<pre class="block w-full min-w-max p-6 text-left text-[14px] font-mono text-cyan-400 leading-[1.65] whitespace-pre">{responseHeaders}</pre>
 								</ScrollArea>
 							</div>
+						</TabsContent>
+
+						<TabsContent value="assertions" class="mt-4">
+							{#if assertionResults.length > 0}
+								<div class="rounded-lg border border-slate-700 bg-slate-900 shadow-xl overflow-hidden">
+									<div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+										<span class="text-xs text-slate-400 font-mono">assertions</span>
+										<span class="text-xs font-mono {assertionPassedCount === assertionResults.length ? 'text-emerald-400' : 'text-red-400'}">
+											{assertionPassedCount}/{assertionResults.length} passed
+										</span>
+									</div>
+									<ul class="p-3 space-y-2">
+										{#each assertionResults as r}
+											<li
+												class="flex items-start gap-2 rounded-md border px-3 py-2 text-sm font-mono
+													{r.passed
+														? 'border-emerald-700/60 bg-emerald-950/40 text-emerald-300'
+														: 'border-red-700/60 bg-red-950/40 text-red-300'}"
+											>
+												<span>{r.passed ? 'PASS' : 'FAIL'}</span>
+												<span class="flex-1">
+													{r.rule.name ? `${r.rule.name}: ` : ''}{r.message}
+												</span>
+											</li>
+										{/each}
+									</ul>
+								</div>
+							{:else}
+								<div class="flex h-[300px] items-center justify-center rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50">
+									<p class="text-sm text-slate-500">No assertions configured. Add rules in the Assertions request tab.</p>
+								</div>
+							{/if}
 						</TabsContent>
 					</Tabs>
 				{:else}

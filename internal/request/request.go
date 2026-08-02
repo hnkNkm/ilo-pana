@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"ilo-pana/internal/config"
@@ -38,8 +41,16 @@ func Build(cfg *config.Config) (*http.Request, error) {
 	}
 
 	var body io.Reader
-	if cfg.Data != "" {
-		body = bytes.NewBufferString(cfg.Data)
+	var bodyFormat string
+	switch cfg.BodyFormat {
+	case "multipart":
+		body, bodyFormat = buildMultipartBody(cfg)
+	case "urlencoded":
+		body, bodyFormat = buildURLEncodedBody(cfg)
+	default:
+		if cfg.Data != "" {
+			body = bytes.NewBufferString(cfg.Data)
+		}
 	}
 
 	req, err := http.NewRequest(cfg.Method, cfg.URL, body)
@@ -57,6 +68,11 @@ func Build(cfg *config.Config) (*http.Request, error) {
 		if IsJSON(cfg.Data) {
 			req.Header.Set("Content-Type", "application/json")
 		}
+	}
+
+	// Form bodies require an exact Content-Type (multipart includes the boundary)
+	if bodyFormat != "" {
+		req.Header.Set("Content-Type", bodyFormat)
 	}
 
 	return req, nil
@@ -107,4 +123,56 @@ func IsJSON(s string) bool {
 	s = strings.TrimSpace(s)
 	return (strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}")) ||
 		(strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]"))
+}
+
+// buildMultipartBody encodes form fields as multipart/form-data and returns
+// the body along with the Content-Type header value (including boundary).
+func buildMultipartBody(cfg *config.Config) (io.Reader, string) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	for _, f := range cfg.FormFields {
+		if f.Key == "" {
+			continue
+		}
+		if f.IsFile {
+			h := make(textproto.MIMEHeader)
+			h.Set("Content-Disposition", fmt.Sprintf(
+				`form-data; name="%s"; filename="%s"`,
+				escapeQuotes(f.Key), escapeQuotes(filepath.Base(f.FileName))))
+			contentType := f.ContentType
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+			h.Set("Content-Type", contentType)
+			part, err := writer.CreatePart(h)
+			if err != nil {
+				continue
+			}
+			part.Write(f.FileContent)
+		} else {
+			writer.WriteField(f.Key, f.Value)
+		}
+	}
+	writer.Close()
+	return &buf, writer.FormDataContentType()
+}
+
+// buildURLEncodedBody encodes form fields as application/x-www-form-urlencoded.
+func buildURLEncodedBody(cfg *config.Config) (io.Reader, string) {
+	form := url.Values{}
+	for _, f := range cfg.FormFields {
+		if f.Key != "" && !f.IsFile {
+			form.Add(f.Key, f.Value)
+		}
+	}
+	return strings.NewReader(form.Encode()), "application/x-www-form-urlencoded"
+}
+
+// escapeQuotes escapes quotes and newlines in multipart header values.
+func escapeQuotes(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	return s
 }

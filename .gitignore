@@ -31,6 +31,7 @@ go.work.sum
 # Wails frontend
 node_modules
 frontend/dist
+frontend/.vite
 
 # Binary name (in case it's built in root)
 /ilo-pana

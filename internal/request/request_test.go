@@ -1,7 +1,9 @@
 package request
 
 import (
+	"bytes"
 	"io"
+	"mime/multipart"
 	"os"
 	"strings"
 	"testing"
@@ -217,6 +219,110 @@ func TestBuild(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildMultipart(t *testing.T) {
+	cfg := &config.Config{
+		Method: "POST",
+		URL:    "https://api.example.com/upload",
+		Headers: map[string]string{
+			"Content-Type": "application/json", // must be overridden by the boundary value
+		},
+		BodyFormat: "multipart",
+		FormFields: []config.FormField{
+			{Key: "title", Value: "my file"},
+			{Key: "file", IsFile: true, FileName: "doc.txt", ContentType: "text/plain", FileContent: []byte("hello")},
+			{Key: `weird"name`, Value: "x"},
+		},
+		Timeout: 30 * time.Second,
+	}
+
+	req, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	contentType := req.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "multipart/form-data; boundary=") {
+		t.Errorf("Content-Type = %q, want multipart with boundary", contentType)
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
+
+	parsed, err := multipart.NewReader(bytes.NewReader(body), strings.TrimPrefix(contentType, "multipart/form-data; boundary=")).ReadForm(1 << 20)
+	if err != nil {
+		t.Fatalf("failed to parse multipart body: %v\n%s", err, body)
+	}
+	if got := parsed.Value["title"][0]; got != "my file" {
+		t.Errorf("title = %q, want my file", got)
+	}
+	if got := parsed.Value[`weird"name`][0]; got != "x" {
+		t.Errorf("weird name field = %q, want x", got)
+	}
+	fileHeader := parsed.File["file"][0]
+	if fileHeader.Filename != "doc.txt" {
+		t.Errorf("filename = %q, want doc.txt", fileHeader.Filename)
+	}
+	f, err := fileHeader.Open()
+	if err != nil {
+		t.Fatalf("failed to open file part: %v", err)
+	}
+	defer f.Close()
+	data, _ := io.ReadAll(f)
+	if string(data) != "hello" {
+		t.Errorf("file content = %q, want hello", data)
+	}
+}
+
+func TestBuildURLEncoded(t *testing.T) {
+	cfg := &config.Config{
+		Method:     "POST",
+		URL:        "https://api.example.com/form",
+		Headers:    map[string]string{},
+		BodyFormat: "urlencoded",
+		FormFields: []config.FormField{
+			{Key: "name", Value: "alice smith"},
+			{Key: "age", Value: "30"},
+			{Key: "skip", IsFile: true}, // files are ignored for urlencoded
+		},
+		Timeout: 30 * time.Second,
+	}
+
+	req, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := req.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
+		t.Errorf("Content-Type = %q", got)
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
+	want := "age=30&name=alice+smith"
+	if string(body) != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+}
+
+func TestBuildURLEncodedMultipartFileContentType(t *testing.T) {
+	// Non-form bodies must keep the auto-set JSON Content-Type.
+	cfg := &config.Config{
+		Method:  "POST",
+		URL:     "https://api.example.com/x",
+		Data:    `{"a":1}`,
+		Headers: map[string]string{},
+		Timeout: 30 * time.Second,
+	}
+	req, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := req.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", got)
 	}
 }
 

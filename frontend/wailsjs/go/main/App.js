@@ -14,6 +14,10 @@ export function DeleteRequest(arg1, arg2) {
   return window['go']['main']['App']['DeleteRequest'](arg1, arg2);
 }
 
+export function EvaluateAssertions(arg1, arg2) {
+  return window['go']['main']['App']['EvaluateAssertions'](arg1, arg2);
+}
+
 export function ExecuteRequest(arg1) {
   return window['go']['main']['App']['ExecuteRequest'](arg1);
 }
@@ -30,6 +34,10 @@ export function ExportCollection(arg1) {
   return window['go']['main']['App']['ExportCollection'](arg1);
 }
 
+export function GenerateCurl(arg1) {
+  return window['go']['main']['App']['GenerateCurl'](arg1);
+}
+
 export function GetCollection(arg1) {
   return window['go']['main']['App']['GetCollection'](arg1);
 }
@@ -44,6 +52,10 @@ export function Greet(arg1) {
 
 export function ImportCollection(arg1) {
   return window['go']['main']['App']['ImportCollection'](arg1);
+}
+
+export function ImportCurl(arg1) {
+  return window['go']['main']['App']['ImportCurl'](arg1);
 }
 
 export function ImportOpenAPI(arg1, arg2) {

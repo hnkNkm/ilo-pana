@@ -1,3 +1,60 @@
+export namespace assertion {
+	
+	export class Rule {
+	    name: string;
+	    kind: string;
+	    target?: string;
+	    expected?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Rule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.target = source["target"];
+	        this.expected = source["expected"];
+	    }
+	}
+	export class Result {
+	    rule: Rule;
+	    passed: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Result(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rule = this.convertValues(source["rule"], Rule);
+	        this.passed = source["passed"];
+	        this.message = source["message"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace collection {
 	
 	export class SavedRequest {
@@ -87,6 +144,56 @@ export namespace collection {
 
 }
 
+export namespace config {
+	
+	export class FormField {
+	    key: string;
+	    value: string;
+	    isFile: boolean;
+	    fileName: string;
+	    fileContent: number[];
+	    contentType: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FormField(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.value = source["value"];
+	        this.isFile = source["isFile"];
+	        this.fileName = source["fileName"];
+	        this.fileContent = source["fileContent"];
+	        this.contentType = source["contentType"];
+	    }
+	}
+
+}
+
+export namespace curl {
+	
+	export class Request {
+	    method: string;
+	    url: string;
+	    headers?: Record<string, string>;
+	    body?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Request(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.method = source["method"];
+	        this.url = source["url"];
+	        this.headers = source["headers"];
+	        this.body = source["body"];
+	    }
+	}
+
+}
+
 export namespace environment {
 	
 	export class Environment {
@@ -132,10 +239,30 @@ export namespace environment {
 
 export namespace main {
 	
+	export class CurlParams {
+	    Method: string;
+	    URL: string;
+	    Headers: Record<string, string>;
+	    Body: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CurlParams(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Method = source["Method"];
+	        this.URL = source["URL"];
+	        this.Headers = source["Headers"];
+	        this.Body = source["Body"];
+	    }
+	}
 	export class RequestParams {
 	    Method: string;
 	    URL: string;
 	    Body: string;
+	    BodyFormat: string;
+	    FormFields: config.FormField[];
 	    Headers: Record<string, string>;
 	    TimeoutMs: number;
 	    SessionName: string;
@@ -152,6 +279,8 @@ export namespace main {
 	        this.Method = source["Method"];
 	        this.URL = source["URL"];
 	        this.Body = source["Body"];
+	        this.BodyFormat = source["BodyFormat"];
+	        this.FormFields = this.convertValues(source["FormFields"], config.FormField);
 	        this.Headers = source["Headers"];
 	        this.TimeoutMs = source["TimeoutMs"];
 	        this.SessionName = source["SessionName"];
@@ -159,6 +288,24 @@ export namespace main {
 	        this.Variables = source["Variables"];
 	        this.Environment = source["Environment"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
