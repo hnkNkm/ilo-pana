@@ -28,6 +28,7 @@
             nodejs_22
             pnpm
             wails
+            svelte-language-server
           ];
 
           shellHook = ''
